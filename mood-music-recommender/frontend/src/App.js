@@ -28,52 +28,24 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // async function verifySession() {
-    //   const storedToken = localStorage.getItem('spotify_token');
-    //   const storedSessionId = localStorage.getItem('session_id');
-    //   const refreshToken = localStorage.getItem('spotify_refresh_token');
-
-    //   if (storedToken && storedSessionId) {
-    //     try {
-    //       const response = await fetch(`${API_URL}/api/session/verify`, {
-    //         method: 'POST',
-    //         headers: { 'Content-Type': 'application/json' },
-    //         body: JSON.stringify({ sessionId: storedSessionId, token: storedToken, refreshToken }),
-    //       });
-
-    //       const data = await response.json();
-    //       if (data.valid) {
-    //         setToken(data.accessToken);
-    //         setSessionId(data.sessionId);
-    //         localStorage.setItem('spotify_token', data.accessToken); // Update token
-    //       } else {
-    //         handleLogout();
-    //       }
-    //     } catch (error) {
-    //       console.error("Session verification failed:", error);
-    //       handleLogout();
-    //     }
-    //   }
-    //   setLoading(false);
-    // }
     async function verifySession() {
       const storedToken = localStorage.getItem('spotify_token');
       const storedSessionId = localStorage.getItem('session_id');
-      const refreshToken = localStorage.getItem('spotify_refresh_token');
+      const storedRefreshToken = localStorage.getItem('spotify_refresh_token');
     
       if (storedToken && storedSessionId) {
         try {
           const response = await fetch(`${API_URL}/api/session/verify`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: storedSessionId, token: storedToken, refreshToken }),
+            body: JSON.stringify({ sessionId: storedSessionId, token: storedToken, refreshToken: storedRefreshToken }),
           });
     
           const data = await response.json();
           if (data.valid) {
             setToken(data.accessToken);
             setSessionId(data.sessionId);
-            localStorage.setItem('spotify_token', data.accessToken); // Update token
+            localStorage.setItem('spotify_token', data.accessToken);
           } else {
             console.log("Session invalid. Logging out.");
             handleLogout();

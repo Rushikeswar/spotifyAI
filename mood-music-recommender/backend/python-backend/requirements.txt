@@ -1,0 +1,5 @@
+flask
+numpy<2.0.0
+tensorflow==2.17.1
+tensorflow-intel==2.17.1
+tensorflow_hub

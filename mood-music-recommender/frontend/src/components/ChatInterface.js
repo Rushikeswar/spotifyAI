@@ -137,7 +137,22 @@ function ChatInterface({ token, sessionId }) {
     };
     verifySession();
   }, [navigate]);
+  useEffect(() => {
+    const fetchTracks = async () => {
+      try {
+        const response = await axios.get(`http://localhost:5000/api/spotify/tracks`, {
+          params: { sessionId: validatedSessionId }
+        });
+        setTracks(response.data.tracks);
+      } catch (error) {
+        console.error("Failed to fetch tracks:", error);
+      }
+    };
   
+    if (validatedSessionId) {
+      fetchTracks();
+    }
+  }, [validatedSessionId]);
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -222,18 +237,19 @@ function ChatInterface({ token, sessionId }) {
     if (error.response?.status === 401) {
       try {
         const storedRefreshToken = localStorage.getItem('spotify_refresh_token');
-        const verifyResponse = await axios.post('http://localhost:5000/api/session/verify', {
+        const response = await axios.post(`http://localhost:5000/api/spotify/refresh`, {
+          refreshToken: storedRefreshToken,
           sessionId: validatedSessionId,
-          token: validatedToken,
-          refreshToken: storedRefreshToken
         });
-
-        if (verifyResponse.data.valid) {
-          localStorage.setItem('spotify_token', verifyResponse.data.accessToken);
-          setValidatedToken(verifyResponse.data.accessToken);
+  
+        if (response.data.accessToken) {
+          localStorage.setItem('spotify_token', response.data.accessToken);
+          setValidatedToken(response.data.accessToken);
           return;
         }
-      } catch {}
+      } catch (refreshError) {
+        console.error("Token refresh failed:", refreshError);
+      }
       navigate('/login');
     } else {
       setMessages(prev => [...prev, { text: "Sorry, something went wrong. Please try again.", isUser: false }]);
