@@ -89,7 +89,7 @@ const PlayerContainer = styled.div`
   padding: 10px 0;
   background-color: #181818;
 `;
-
+const API_URL = 'http://localhost:5000';
 function ChatInterface({ token, sessionId }) {
   const navigate = useNavigate();
   const [isSessionValid, setIsSessionValid] = useState(false);
@@ -131,7 +131,8 @@ function ChatInterface({ token, sessionId }) {
         } else {
           navigate('/login');
         }
-      } catch {
+      } catch (error) {
+        console.error("Session verification failed:", error);
         navigate('/login');
       }
     };
@@ -237,7 +238,7 @@ function ChatInterface({ token, sessionId }) {
     if (error.response?.status === 401) {
       try {
         const storedRefreshToken = localStorage.getItem('spotify_refresh_token');
-        const response = await axios.post(`http://localhost:5000/api/spotify/refresh`, {
+        const response = await axios.post(`${API_URL}/api/spotify/refresh`, {
           refreshToken: storedRefreshToken,
           sessionId: validatedSessionId,
         });
