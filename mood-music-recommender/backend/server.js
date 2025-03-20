@@ -71,6 +71,7 @@ async function validateSession(sessionId) {
   const expiryTime = new Date(session.timestamp.getTime() + session.expiresIn * 1000 - 60000); // 1 minute buffer
 
   if (now > expiryTime) {
+    console.log('Refreshing token...');
     if (!session.spotifyRefreshToken) {
       throw new Error('Refresh token not available');
     }
@@ -151,16 +152,13 @@ app.post('/api/session/verify', async (req, res) => {
 // Spotify login route
 app.get('/api/spotify/login', async(req, res) => {
   const scopes = [
-    'user-read-private', 
-    'user-read-email', 
-    'user-top-read',
-    'user-read-recently-played',  // Added for recent track access
-    'playlist-read-private',  // Added for private playlists
-    'playlist-modify-public', 
-    'playlist-modify-private', 
-    'user-library-read',
-    'playlist-read-collaborative',
-    'user-library-modify'
+    'user-read-private',           // Required for basic user info
+    'user-read-email',             // Required for user email
+    'user-read-recently-played',   // Required for recently played tracks
+    'user-top-read',               // Required for top artists and tracks
+    'playlist-read-private',       // Required for private playlists
+    'playlist-read-collaborative', // Required for collaborative playlists
+    'user-library-read'            // Required for saved tracks
   ];
   res.json({ url: spotifyApi.createAuthorizeURL(scopes, null, 'code') });
 });
@@ -176,7 +174,6 @@ app.post('/api/spotify/callback', async (req, res) => {
 
   try {
       const data = await spotifyApi.authorizationCodeGrant(code);
-
       if (!data.body.access_token) {
           throw new Error("No access token received from Spotify");
       }
@@ -276,29 +273,16 @@ app.post('/api/chat', async (req, res) => {
     
       // Fetch recently played tracks
       try {
+        console.log(session.spotifyAccessToken);
         recentTracks = await spotifyApi.getMyRecentlyPlayedTracks({ limit: 5 });
-        console.log("Recently Played Tracks:", recentTracks.body.items);
-      } catch (error) {
-        console.error("Failed to fetch recently played tracks:", error);
-        recentTracks = null;
-      }
-    
-      // Fetch top artists
-      try {
-        topArtists = await spotifyApi.getMyTopArtists({ limit: 5, time_range: 'medium_term' }); // Options: short_term, medium_term, long_term
-        console.log("Top Artists:", topArtists.body.items);
-      } catch (error) {
-        console.error("Failed to fetch top artists:", error);
-        topArtists = null;
-      }
-    
-      // Fetch user playlists
-      try {
+      
+        // Fetch top artists
+        topArtists = await spotifyApi.getMyTopArtists({ limit: 5, time_range: 'medium_term' });
+      
+        // Fetch user playlists
         userPlaylists = await spotifyApi.getUserPlaylists({ limit: 5 });
-        console.log("User Playlists:", userPlaylists.body.items);
       } catch (error) {
-        console.error("Failed to fetch user playlists:", error);
-        userPlaylists = null;
+        console.error("Spotify API Error:", error);
       }
     
       // Process recently played tracks
@@ -316,7 +300,7 @@ app.post('/api/chat', async (req, res) => {
       if (tracks.length < 5 && topArtists?.body?.items?.length) {
         for (const artist of topArtists.body.items) {
           try {
-            const artistTracks = await spotifyApi.getArtistTopTracks(artist.id, 'US'); // 'US' is the market code
+            const artistTracks = await spotifyApi.getArtistTopTracks(artist.id, 'IN'); // 'US' is the market code
             if (artistTracks?.body?.tracks?.length) {
               tracks = [
                 ...tracks,
