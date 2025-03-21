@@ -113,19 +113,21 @@ function ChatInterface({ token, sessionId }) {
         const storedToken = localStorage.getItem('spotify_token');
         const storedSessionId = localStorage.getItem('session_id');
         const storedRefreshToken = localStorage.getItem('spotify_refresh_token');
-
+  
         if (!storedSessionId || !storedToken) return navigate('/login');
-
-        const response = await axios.post('http://localhost:5000/api/session/verify', {
+  
+        const response = await axios.post(`${API_URL}/api/session/verify`, {
           sessionId: storedSessionId,
           token: storedToken,
           refreshToken: storedRefreshToken
         });
-
+  
         if (response.data.valid) {
           setIsSessionValid(true);
           setValidatedSessionId(response.data.sessionId || storedSessionId);
           setValidatedToken(response.data.accessToken || storedToken);
+          
+          // Make sure we're always using the most current token
           localStorage.setItem('spotify_token', response.data.accessToken || storedToken);
           localStorage.setItem('session_id', response.data.sessionId || storedSessionId);
         } else {
@@ -171,9 +173,11 @@ function ChatInterface({ token, sessionId }) {
     setMessages(prev => [...prev, { id: loadingMsgId, text: "Thinking...", isUser: false, isLoading: true }]);
     
     try {
+      const currentToken = localStorage.getItem('spotify_token');
       console.log("Sending chat request with:", {
         message: userMessage,
-        sessionId: validatedSessionId
+        sessionId: validatedSessionId,
+        token: `${currentToken.substring(0, 10)}...`
       });
   
       const response = await axios.post(`http://localhost:5000/api/chat`, {
@@ -238,23 +242,41 @@ function ChatInterface({ token, sessionId }) {
     if (error.response?.status === 401) {
       try {
         const storedRefreshToken = localStorage.getItem('spotify_refresh_token');
+        const storedSessionId = localStorage.getItem('session_id');
+        
+        if (!storedRefreshToken || !storedSessionId) {
+          // If we don't have refresh token or session ID, redirect to login
+          navigate('/login');
+          return;
+        }
+        
         const response = await axios.post(`${API_URL}/api/spotify/refresh`, {
           refreshToken: storedRefreshToken,
-          sessionId: validatedSessionId,
+          sessionId: storedSessionId,
         });
   
         if (response.data.accessToken) {
+          // Update local storage and state with new token
           localStorage.setItem('spotify_token', response.data.accessToken);
           setValidatedToken(response.data.accessToken);
+          
+          // Retry the original request that failed (you might want to implement this)
           return;
         }
       } catch (refreshError) {
         console.error("Token refresh failed:", refreshError);
+        // Clear invalid tokens and redirect to login
+        localStorage.removeItem('spotify_token');
+        localStorage.removeItem('spotify_refresh_token');
+        navigate('/login');
+        return;
       }
-      navigate('/login');
-    } else {
-      setMessages(prev => [...prev, { text: "Sorry, something went wrong. Please try again.", isUser: false }]);
     }
+    
+    setMessages(prev => [...prev, { 
+      text: "Sorry, something went wrong. Please try again.", 
+      isUser: false 
+    }]);
   };
   return (
     <ChatContainer>

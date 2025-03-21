@@ -62,7 +62,7 @@ const spotifyApi = new SpotifyWebApi({
   redirectUri: process.env.REDIRECT_URI || 'http://localhost:3000/callback'
 });
 
-// Function to check if a session is valid and refresh if necessary
+
 async function validateSession(sessionId) {
   const session = await Session.findOne({ sessionId });
   if (!session) throw new Error('Session not found');
@@ -149,7 +149,7 @@ app.post('/api/session/verify', async (req, res) => {
   }
 });
 
-// Spotify login route
+// In server.js, update the scopes in your /api/spotify/login route
 app.get('/api/spotify/login', async(req, res) => {
   const scopes = [
     'user-read-private',           // Required for basic user info
@@ -158,7 +158,11 @@ app.get('/api/spotify/login', async(req, res) => {
     'user-top-read',               // Required for top artists and tracks
     'playlist-read-private',       // Required for private playlists
     'playlist-read-collaborative', // Required for collaborative playlists
-    'user-library-read'            // Required for saved tracks
+    'playlist-modify-public',      // Required for creating public playlists
+    'playlist-modify-private',     // Required for creating private playlists
+    'user-library-read',           // Required for saved tracks
+    'streaming',                   // Required for playback (if using Web Playback SDK)
+    'user-read-playback-state'     // Required for playback state (if using Web Playback SDK)
   ];
   res.json({ url: spotifyApi.createAuthorizeURL(scopes, null, 'code') });
 });
@@ -234,6 +238,16 @@ app.post('/api/chat', async (req, res) => {
     const session = await validateSession(sessionId);
     console.log("Session validated:", session.sessionId);
     spotifyApi.setAccessToken(session.spotifyAccessToken); // Set the access token
+    console.log("Access token set for Spotify API:", session.spotifyAccessToken.substring(0, 10) + "...");
+
+    try {
+      const me = await spotifyApi.getMe();
+      console.log("Spotify user verified:", me.body.id);
+    } catch (spotifyErr) {
+      console.error("Spotify API verification error:", spotifyErr);
+      throw new Error("Spotify API authentication failed");
+    }
+
 
     const chatSession = await ChatSession.findOne({ sessionId });
     let conversationHistory = [];
@@ -440,15 +454,17 @@ app.post('/api/spotify/refresh', async (req, res) => {
   }
 
   try {
-    spotifyApi.setRefreshToken(refreshToken);
-    const data = await spotifyApi.refreshAccessToken();
-
-    // Update the session with the new access token and expiry
+    // Find the session first
     const session = await Session.findOne({ sessionId });
     if (!session) {
       return res.status(404).json({ error: "Session not found" });
     }
+    
+    // Set refresh token and refresh
+    spotifyApi.setRefreshToken(refreshToken);
+    const data = await spotifyApi.refreshAccessToken();
 
+    // Update session
     session.spotifyAccessToken = data.body.access_token;
     session.expiresIn = data.body.expires_in;
     session.timestamp = new Date();
@@ -460,6 +476,7 @@ app.post('/api/spotify/refresh', async (req, res) => {
     });
   } catch (err) {
     console.error("Token refresh error:", err);
+    // If refresh failed, client should re-authenticate
     res.status(401).json({ error: "Failed to refresh token. Please re-authenticate." });
   }
 });
