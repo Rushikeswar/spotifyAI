@@ -34,15 +34,33 @@ const sessionSchema = new mongoose.Schema({
 });
 const Session = mongoose.model('Session', sessionSchema);
 
-function recommendGenres(emotionAnalysis) {
+function recommendGenres(emotionAnalysis, userTopGenres = []) {
   const genreMapping = {
-      "happy": ["pop", "dance", "indie"],
-      "sad": ["acoustic", "blues", "soul"],
-      "angry": ["rock", "metal", "punk"],
-      "neutral": ["classical", "lofi", "jazz"]
+    "happy": ["pop", "dance", "indie pop", "house", "funk"],
+    "sad": ["acoustic", "blues", "soul", "folk", "piano"],
+    "angry": ["rock", "metal", "punk", "hard rock", "alternative"],
+    "neutral": userTopGenres,
+    "excited": ["edm", "electronic", "techno", "drum and bass"],
+    "relaxed": ["chill", "ambient", "acoustic", "soft rock"],
+    "nostalgic": ["classic rock", "retro", "jazz", "synthwave"]
   };
-  return genreMapping[emotionAnalysis.dominantEmotion] || ["pop"];
+
+  // 1️ If emotion is unknown, default to neutral
+  let emotion = emotionAnalysis.dominantEmotion || "neutral";
+
+  // 2️ If emotion is mixed (e.g., "happy-sad"), split and blend genres
+  let emotions = emotion.includes("-") ? emotion.split("-") : [emotion];
+  let genres = emotions.flatMap(e => genreMapping[e] || []);
+
+  // 3️ If user has preferred genres, blend them into recommendations
+  if (userTopGenres.length > 0) {
+    genres = [...new Set([...genres, ...userTopGenres])]; // Merge & remove duplicates
+  }
+
+  return genres.length ? genres : ["pop", "indie"]; // Final fallback
 }
+
+
 
 const spotifyApi = new SpotifyWebApi({
   clientId: process.env.SPOTIFY_CLIENT_ID,
@@ -198,7 +216,7 @@ app.get('/api/spotify/tracks', async (req, res) => {
   try {
     const { sessionId } = req.query;
     const session = await validateSession(sessionId);
-    const savedTracks = await spotifyApi.getMySavedTracks({ limit: 50 });
+    const savedTracks = await spotifyApi.getMySavedTracks({ limit: 10 });
     
     const tracks = savedTracks.body.items.map(item => ({
       id: item.track.id,
@@ -215,7 +233,6 @@ app.get('/api/spotify/tracks', async (req, res) => {
     res.status(500).json({ error: "Failed to fetch saved tracks" });
   }
 });
-
 app.post('/api/chat', async (req, res) => {
   const { message, sessionId } = req.body;
   console.log("Received chat request:", { message, sessionId });
@@ -255,7 +272,32 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
-    const recommendedGenres = recommendGenres(emotionAnalysis);
+    let userTopGenres = [];
+    try {
+      const topTracks = await spotifyApi.getMyTopTracks({ limit: 50, time_range: 'medium_term' });
+      // Extract genres from top artists
+      const genreCounts = {};
+      for (const track of topTracks.body.items) {
+        // Get the artist ID from the track
+        const artistId = track.artists[0]?.id;
+        
+        if (artistId) {
+          // Fetch the artist details to get their genres
+          const artistData = await spotifyApi.getArtist(artistId);
+          artistData.body.genres.forEach(genre => {
+            genreCounts[genre] = (genreCounts[genre] || 0) + 1;
+          });
+        }
+      }
+      // Sort genres by frequency & pick top ones
+      userTopGenres = Object.keys(genreCounts).sort((a, b) => genreCounts[b] - genreCounts[a]).slice(0, 5);
+      console.log("User's Top Genres:", userTopGenres);
+    } catch (error) {
+      console.error("Failed to fetch user top genres:", error);
+    }
+
+
+    const recommendedGenres = recommendGenres(emotionAnalysis, userTopGenres);
     console.log("Recommended Genres:", recommendedGenres);
 
     const responseText = emotionAnalysis.generatedResponse;
@@ -269,96 +311,91 @@ app.post('/api/chat', async (req, res) => {
       // Verify the token works by getting user profile first
       try {
         const me = await spotifyApi.getMe();
-        console.log("Successfully retrieved user profile for:", me.body);
+        // console.log("Successfully retrieved user profile for:", me.body);
       } catch (profileError) {
         console.error("Failed to fetch user profile - token may be invalid:", profileError);
         throw new Error("Authentication error - please login again");
       }
-      
+      for (const genre in recommendedGenres)
+      {
       // Now fetch recent tracks, top artists and playlists
       try {
-        const recentTracks = await spotifyApi.getMyRecentlyPlayedTracks({ limit: 5 });
-        console.log("Recent Tracks Response:", JSON.stringify(recentTracks.body, null, 2));
+        const recentTracks = await spotifyApi.getMyRecentlyPlayedTracks({ limit: 50 });
         
         if (recentTracks?.body?.items?.length) {
-          tracks = recentTracks.body.items.map(item => ({
-            id: item.track.id,
-            name: item.track.name,
-            artist: item.track.artists[0]?.name || 'Unknown Artist',
-            image: item.track.album?.images[0]?.url || null,
-            uri: item.track.uri
-          }));
+            tracks.push(...recentTracks.body.items
+              .filter(item => item.track && item.track.genres?.includes(genre))
+              .map(item => ({
+                id: item.track.id,
+                name: item.track.name,
+                artist: item.track.artists[0]?.name || 'Unknown Artist',
+                image: item.track.album?.images[0]?.url || null,
+                uri: item.track.uri,
+                genre
+              })));
         }
       } catch (recentError) {
+        
         console.error("Failed to fetch recent tracks:", recentError);
       }
-      
+      console.log("1"+" "+tracks.length);
       // Fetch top artists only if we need more tracks
-      if (tracks.length < 5) {
+      try {
+        const userPlaylists = await spotifyApi.getUserPlaylists({ limit: 50 });
+        console.log(`Retrieved ${userPlaylists.body.items.length} user playlists`);
+        
+        for (const playlist of userPlaylists.body.items) {
+          try {
+            const playlistTracks = await spotifyApi.getPlaylistTracks(playlist.id, { limit: 10 });
+            tracks.push(...playlistTracks.body.items
+              .filter(item => item.track && item.track.genres?.includes(genre))
+              .map(item => ({
+                id: item.track.id,
+                name: item.track.name,
+                artist: item.track.artists[0]?.name || 'Unknown Artist',
+                image: item.track.album?.images[0]?.url || null,
+                uri: item.track.uri,
+                genre
+              })));
+            if (tracks.length >= 10) break;
+          } catch (playlistTracksError) {
+            console.error(`Failed to fetch tracks for playlist ${playlist.name}:`, playlistTracksError);
+          }
+        }
+      } catch (userPlaylistsError) {
+        console.error("Failed to fetch user playlists:", userPlaylistsError);
+      }
+      console.log("2"+" "+tracks.length);
         try {
-          const topArtists = await spotifyApi.getMyTopArtists({ limit: 5, time_range: 'medium_term' });
+          const topArtists = await spotifyApi.getMyTopArtists({ limit: 50, time_range: 'medium_term' });
           console.log(`Retrieved ${topArtists.body.items.length} top artists`);
           
           for (const artist of topArtists.body.items) {
-            try {
-              const artistTracks = await spotifyApi.getArtistTopTracks(artist.id, 'IN');
-              if (artistTracks?.body?.tracks?.length) {
-                tracks = [
-                  ...tracks,
-                  ...artistTracks.body.tracks.map(track => ({
-                    id: track.id,
-                    name: track.name,
-                    artist: track.artists[0]?.name || 'Unknown Artist',
-                    image: track.album?.images[0]?.url || null,
-                    uri: track.uri
-                  }))
-                ];
+            if (artist.genres.includes(genre)) {
+              try {
+                const artistTracks = await spotifyApi.getArtistTopTracks(artist.id);
+                tracks.push(...artistTracks.body.tracks.map(track => ({
+                  id: track.id,
+                  name: track.name,
+                  artist: track.artists[0]?.name || 'Unknown Artist',
+                  image: track.album?.images[0]?.url || null,
+                  uri: track.uri,
+                  genre
+                })));
+              } catch (artistTracksError) {
+                console.error(`Failed to fetch tracks for artist ${artist.name}:`, artistTracksError);
               }
-              if (tracks.length >= 10) break;
-            } catch (artistTracksError) {
-              console.error(`Failed to fetch tracks for artist ${artist.name}:`, artistTracksError);
             }
           }
         } catch (topArtistsError) {
+         
           console.error("Failed to fetch top artists:", topArtistsError);
         }
-      }
-      
-      // Fetch user playlists only if we still need more tracks
-      if (tracks.length < 5) {
-        try {
-          const userPlaylists = await spotifyApi.getUserPlaylists({ limit: 5 });
-          console.log(`Retrieved ${userPlaylists.body.items.length} user playlists`);
-          
-          for (const playlist of userPlaylists.body.items) {
-            try {
-              const playlistTracks = await spotifyApi.getPlaylistTracks(playlist.id, { limit: 10 });
-              if (playlistTracks?.body?.items?.length) {
-                tracks = [
-                  ...tracks,
-                  ...playlistTracks.body.items
-                    .filter(item => item.track) // Make sure there's a track object
-                    .map(item => ({
-                      id: item.track.id,
-                      name: item.track.name,
-                      artist: item.track.artists[0]?.name || 'Unknown Artist',
-                      image: item.track.album?.images[0]?.url || null,
-                      uri: item.track.uri
-                    }))
-                ];
-              }
-              if (tracks.length >= 10) break;
-            } catch (playlistTracksError) {
-              console.error(`Failed to fetch tracks for playlist ${playlist.name}:`, playlistTracksError);
-            }
-          }
-        } catch (userPlaylistsError) {
-          console.error("Failed to fetch user playlists:", userPlaylistsError);
-        }
-      }
+        console.log("3"+" "+tracks.length);
+    }
     } catch (error) {
       console.error("Error fetching user-specific data:", error);
-      
+     
       // If it's an authentication error, send a special response
       if (error.message.includes("Authentication error")) {
         return res.status(401).json({ 
@@ -369,28 +406,36 @@ app.post('/api/chat', async (req, res) => {
     }
     
     // Fallback to genre-based search if needed
-    if (tracks.length < 5) {
-      console.log("Falling back to genre-based recommendations");
+    if (tracks.length < 10) {
+      console.log("Falling back to recently played songs");
+    
       try {
-        for (const genre of recommendedGenres) {
-          const searchResults = await spotifyApi.search(`genre:${genre}`, ['track'], { limit: 3 });
-          if (searchResults?.body?.tracks?.items?.length) {
-            tracks = [...tracks, ...searchResults.body.tracks.items.map(track => ({
-              id: track.id,
-              name: track.name,
-              artist: track.artists[0]?.name || 'Unknown Artist',
-              image: track.album?.images[0]?.url || null,
-              uri: track.uri,
-              genre
-            }))];
-          }
-          if (tracks.length >= 10) break;
+        const recentlyPlayed = await spotifyApi.getMyRecentlyPlayedTracks({ limit: 50 });
+    
+        if (recentlyPlayed?.body?.items?.length) {
+          tracks = [
+            ...tracks,
+            ...recentlyPlayed.body.items.map(item => ({
+              id: item.track.id,
+              name: item.track.name,
+              artist: item.track.artists[0]?.name || 'Unknown Artist',
+              image: item.track.album?.images[0]?.url || null,
+              uri: item.track.uri,
+              genre: item.track.genres || "unknown"
+            }))
+          ];
         }
+    
+        // Ensure at least 10 unique tracks
+        tracks = [...new Map(tracks.map(track => [track.id, track])).values()].slice(0, 10);
       } catch (error) {
-        console.error("Genre search error:", error);
+        console.error("Error fetching recently played songs:", error);
       }
     }
-
+    
+console.log("4"+" "+tracks.length);
+ // Shuffle tracks
+    tracks = tracks.sort(() => Math.random() - 0.5);
     // Ensure unique tracks and limit to 10
     const uniqueTracks = tracks.reduce((unique, track) => {
       if (!unique.some(t => t.id === track.id)) {
@@ -440,7 +485,203 @@ app.post('/api/chat', async (req, res) => {
       details: err.message
     });
   }
-});
+}); 
+// app.post('/api/chat', async (req, res) => {
+//   const { message, sessionId } = req.body;
+//   console.log("Received chat request:", { message, sessionId });
+
+//   try {
+//     // Validate session and set access token
+//     const session = await validateSession(sessionId);
+//     console.log("Session validated:", session.sessionId);
+    
+//     // Ensure access token is set for all subsequent Spotify API calls
+//     spotifyApi.setAccessToken(session.spotifyAccessToken);
+    
+//     // Get chat history
+//     const chatSession = await ChatSession.findOne({ sessionId });
+//     let conversationHistory = chatSession ? chatSession.messages.slice(-5).map(msg => msg.text) : [];
+
+    
+//     // Call Python backend for emotion analysis and response generation
+//     const emotionResponse = await axios.post("http://localhost:5001/analyze", { 
+//       text: message,
+//       context: conversationHistory
+//     });
+//     const emotionAnalysis = emotionResponse.data;
+//     console.log("AI Emotion Analysis:", emotionAnalysis);
+
+//     if (emotionAnalysis.isToxic) {
+//       return res.json({
+//         response: "I'm not comfortable responding to that message. Let's talk about music in a more positive way.",
+//         error: "Content policy violation"
+//       });
+//     }
+
+//     const recommendedGenres = recommendGenres(emotionAnalysis);
+//     console.log("Recommended Genres:", recommendedGenres);
+
+//     const responseText = emotionAnalysis.generatedResponse;
+
+//     let tracks = [];
+    
+//     // Fetch user-specific data with better error handling
+//     try {
+//       console.log("Attempting to fetch user-specific data with token:", session.spotifyAccessToken.substring(0, 10) + "...");
+      
+//       // Verify the token works by getting user profile first
+//       try {
+//         const me = await spotifyApi.getMe();
+//         // console.log("Successfully retrieved user profile for:", me.body);
+//       } catch (profileError) {
+//         console.error("Failed to fetch user profile - token may be invalid:", profileError);
+//         throw new Error("Authentication error - please login again");
+//       }
+      
+//       // Now fetch recent tracks, top artists and playlists
+//       for (const genre of recommendedGenres) {
+//         try {
+//           // Fetch user's recent tracks
+//           const recentTracks = await spotifyApi.getMyRecentlyPlayedTracks({ limit: 20 });
+//           if (recentTracks?.body?.items?.length) {
+//             tracks.push(...recentTracks.body.items
+//               .filter(item => item.track && item.track.genres?.includes(genre))
+//               .map(item => ({
+//                 id: item.track.id,
+//                 name: item.track.name,
+//                 artist: item.track.artists[0]?.name || 'Unknown Artist',
+//                 image: item.track.album?.images[0]?.url || null,
+//                 uri: item.track.uri,
+//                 genre
+//               })));
+              
+//           }
+//           console.log("1"+" "+tracks.length);
+//           // Fetch user's top artists and their tracks
+//           const topArtists = await spotifyApi.getMyTopArtists({ limit: 20});
+//           for (const artist of topArtists.body.items) {
+//             if (artist.genres.includes(genre)) {
+//               try {
+//                 const artistTracks = await spotifyApi.getArtistTopTracks(artist.id);
+//                 tracks.push(...artistTracks.body.tracks.map(track => ({
+//                   id: track.id,
+//                   name: track.name,
+//                   artist: track.artists[0]?.name || 'Unknown Artist',
+//                   image: track.album?.images[0]?.url || null,
+//                   uri: track.uri,
+//                   genre
+//                 })));
+//               } catch (artistTracksError) {
+//                 console.error(`Failed to fetch tracks for artist ${artist.name}:`, artistTracksError);
+//               }
+//             }
+//           }
+//           console.log("2"+" "+tracks.length);
+//           // Fetch user's playlists and filter by genre
+//           const userPlaylists = await spotifyApi.getUserPlaylists({ limit: 20 });
+//           for (const playlist of userPlaylists.body.items) {
+//             try {
+//               const playlistTracks = await spotifyApi.getPlaylistTracks(playlist.id, { limit: 10 });
+//               tracks.push(...playlistTracks.body.items
+//                 .filter(item => item.track && item.track.genres?.includes(genre))
+//                 .map(item => ({
+//                   id: item.track.id,
+//                   name: item.track.name,
+//                   artist: item.track.artists[0]?.name || 'Unknown Artist',
+//                   image: item.track.album?.images[0]?.url || null,
+//                   uri: item.track.uri,
+//                   genre
+//                 })));
+//                 } catch (playlistTracksError) {
+//                   console.error(`Failed to fetch tracks for playlist ${playlist.name}:`, playlistTracksError);
+//                 }
+//           }
+//           console.log("3"+" "+tracks.length);
+
+//         } catch (error) {
+//           console.error(`Failed to fetch genre-based tracks for ${genre}:`, error);
+//         }
+//       }
+      
+//     } catch (error) {
+//       console.error("Error fetching user-specific data:", error);
+//     }
+//         // Fallback to genre-based search if needed
+//         if (tracks.length < 10) {
+//           console.log("Falling back to genre-based recommendations");
+//           try {
+//             for (const genre of recommendedGenres) {
+//               const searchResults = await spotifyApi.search(`genre:${genre}`, ['track'], { limit: 20 });
+//               if (searchResults?.body?.tracks?.items?.length) {
+//                 tracks = [...tracks, ...searchResults.body.tracks.items.map(track => ({
+//                   id: track.id,
+//                   name: track.name,
+//                   artist: track.artists[0]?.name || 'Unknown Artist',
+//                   image: track.album?.images[0]?.url || null,
+//                   uri: track.uri,
+//                   genre
+//                 }))];
+//               }
+//               if (tracks.length >= 10) break;
+//             }
+//           } catch (error) {
+//             console.error("Genre search error:", error);
+//           }
+//         }
+//         console.log("4"+" "+tracks.length);
+//     // Shuffle tracks
+//     tracks = tracks.sort(() => Math.random() - 0.5);
+    
+//     // Ensure unique tracks and limit to 10
+//     const uniqueTracks = tracks.reduce((unique, track) => {
+//       if (!unique.some(t => t.id === track.id)) {
+//         unique.push(track);
+//       }
+//       return unique;
+//     }, []).slice(0, 10);
+
+//     console.log(`Returning ${uniqueTracks.length} tracks to client`);
+
+//     // Save message to chat history
+//     if (chatSession) {
+//       chatSession.messages.push({
+//         text: message,
+//         timestamp: new Date(),
+//         emotion: {
+//           dominantEmotion: emotionAnalysis.dominantEmotion,
+//           mood: emotionAnalysis.mood
+//         }
+//       });
+//       await chatSession.save();
+//     } else {
+//       await new ChatSession({
+//         sessionId,
+//         messages: [{
+//           text: message,
+//           timestamp: new Date(),
+//           emotion: {
+//             dominantEmotion: emotionAnalysis.dominantEmotion,
+//             mood: emotionAnalysis.mood
+//           }
+//         }]
+//       }).save();
+//     }
+
+//     res.json({ 
+//       response: uniqueTracks.length ? responseText : "I'm having trouble finding music right now. Please try again later.",
+//       mood: emotionAnalysis.mood,
+//       emotion: emotionAnalysis.dominantEmotion,
+//       genres: recommendedGenres,
+//       tracks: uniqueTracks
+//     });
+//   } catch (err) {
+//     console.error("Chat API Backend Error:", err.message);
+//     res.status(err.message.includes('Session not found') || err.message.includes('Failed to refresh authentication') ? 401 : 500).json({ 
+//       error: err.message.includes('Session not found') || err.message.includes('Failed to refresh authentication') ? "Authentication required" : "Something went wrong with your request. Please try again.",
+//       details: err.message
+//     });
+//   }
+// });
 app.post('/api/playlist/create', async (req, res) => {
   const { name, trackUris, sessionId } = req.body;
   try {

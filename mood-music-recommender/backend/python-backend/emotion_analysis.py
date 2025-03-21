@@ -47,7 +47,10 @@ def detect_emotion_and_generate_response(text, context=None):
     emotion_scores = {emotion: 1 - scipy.spatial.distance.cosine(text_embedding, emb)
                       for emotion, emb in EMOTIONS.items()}
     dominant_emotion = max(emotion_scores, key=emotion_scores.get)
-    
+    confidence = float(emotion_scores[dominant_emotion])
+        # If confidence is too low, default to neutral
+    if confidence < 0.5:
+        dominant_emotion = "neutral"
     # Determine intent
     intent_scores = {intent: 1 - scipy.spatial.distance.cosine(text_embedding, emb)
                      for intent, emb in INTENTS.items()}
@@ -73,22 +76,44 @@ def generate_dynamic_response(text, intent, emotion, context, is_toxic):
     if is_toxic:
         return "Let's keep the conversation positive. I'm here to help."
     
-    # Generate response based on context
-    context_str = " ".join(context) if context else ""
-    response_prompt = (
-        f"User said: '{text}'. The detected intent is '{intent}', and their mood is '{emotion}'. "
-        f"Considering the conversation history: '{context_str}', generate a natural and engaging response."
-    )
+
     
     # Use a simple heuristic-based generation approach
     if emotion == "happy":
-        return f"That's great to hear! {random.choice(['Tell me more!', 'What made your day special?', 'Let’s keep the good vibes going!'])}"
+        return random.choice([
+            "That's great to hear! Want to celebrate with some upbeat music?",
+            "Awesome! How about some energetic pop or dance tracks?",
+            "Good vibes only! Any song requests?"
+        ])
     elif emotion == "sad":
-        return f"I'm here for you. {random.choice(['Want to talk about it?', 'Maybe some music could help?', 'Sometimes expressing yourself helps.'])}"
+        return random.choice([
+            "I'm here for you. Maybe some soothing acoustic music could help?",
+            "Sad days happen. Do you have a song that brings comfort?",
+            "Music can be healing. Want me to find some soulful tunes?"
+        ])
     elif emotion == "angry":
-        return f"I understand. {random.choice(['What happened?', 'I hope things get better soon.', 'Maybe taking a break could help?'])}"
+        return random.choice([
+            "I get that. Rock or metal might be a good release!",
+            "Let it out! Maybe a powerful punk track?",
+            "Feeling intense? I can find some hard-hitting beats."
+        ])
     elif emotion == "nostalgic":
-        return f"Ah, reminiscing can be bittersweet. {random.choice(['Any special memories?', 'Music can take us back in time!', 'What song reminds you of that moment?'])}"
+        return random.choice([
+            "Ah, nostalgia! Any favorite old-school tracks?",
+            "Music is a time machine! Want some retro vibes?",
+            "Let’s rewind time with classic rock or jazz."
+        ])
+    elif emotion == "relaxed":
+        return random.choice([
+            "Chilling is a mood. How about some lo-fi beats?",
+            "Relaxing sounds good! Maybe some soft acoustic music?",
+            "Want some ambient tracks for a peaceful vibe?"
+        ])
+    elif emotion == "excited":
+        return random.choice([
+            "Let’s turn up the energy! EDM or electronic music?",
+            "Feeling pumped? Maybe some high-energy beats?",
+            "Excitement calls for some danceable tracks!"
+        ])
     else:
         return f"Got it! {random.choice(['Let’s chat more.', 'Tell me more about that!', 'I’d love to hear more.'])}"
-
