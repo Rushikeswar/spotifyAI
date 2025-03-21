@@ -7,14 +7,8 @@ const mongoose = require('mongoose');
 const winston = require('winston');
 const axios = require('axios');
 
-
 const ChatSession = require("./models/ChatSession");
-
-
-
-// Load environment variables
 dotenv.config();
-// Setup logger
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
@@ -23,12 +17,9 @@ const logger = winston.createLogger({
   ),
   transports: [new winston.transports.Console()]
 });
-// Initialize Express app
 const app = express();
 app.use(cors({ origin: ["http://localhost:3000","http://localhost:5001"], credentials: true }));
 app.use(express.json());
-
-// Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB connection error:', err));
@@ -53,36 +44,31 @@ function recommendGenres(emotionAnalysis) {
   return genreMapping[emotionAnalysis.dominantEmotion] || ["pop"];
 }
 
-
-
-// Initialize Spotify API
 const spotifyApi = new SpotifyWebApi({
   clientId: process.env.SPOTIFY_CLIENT_ID,
   clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
   redirectUri: process.env.REDIRECT_URI || 'http://localhost:3000/callback'
 });
 
-
 async function validateSession(sessionId) {
   const session = await Session.findOne({ sessionId });
   if (!session) throw new Error('Session not found');
 
   const now = new Date();
-  const expiryTime = new Date(session.timestamp.getTime() + session.expiresIn * 1000 - 60000); // 1 minute buffer
+  const expiryTime = new Date(session.timestamp.getTime() + session.expiresIn * 1000 - 60000);
 
   if (now > expiryTime) {
     console.log('Refreshing token...');
-    if (!session.spotifyRefreshToken) {
-      throw new Error('Refresh token not available');
-    }
+    if (!session.spotifyRefreshToken) throw new Error('No refresh token available');
 
-    spotifyApi.setRefreshToken(session.spotifyRefreshToken);
     try {
+      spotifyApi.setRefreshToken(session.spotifyRefreshToken);
       const data = await spotifyApi.refreshAccessToken();
       session.spotifyAccessToken = data.body.access_token;
       session.expiresIn = data.body.expires_in;
       session.timestamp = now;
-      await session.save();
+      await session.save(); // Ensure the new token is saved
+      console.log('Token refreshed successfully');
     } catch (error) {
       console.error('Token refresh failed:', error);
       throw new Error('Failed to refresh authentication');
@@ -92,8 +78,18 @@ async function validateSession(sessionId) {
   spotifyApi.setAccessToken(session.spotifyAccessToken);
   return session;
 }
-
-// Add new session verification endpoint
+// Add this to server.js
+app.get('/api/spotify/check-token', async (req, res) => {
+  try {
+    const { sessionId } = req.query;
+    const session = await validateSession(sessionId);
+    const userData = await spotifyApi.getMe();
+    res.json({ valid: true, user: userData.body });
+  } catch (error) {
+    console.error("Token check failed:", error);
+    res.status(401).json({ valid: false, error: error.message });
+  }
+});
 app.post('/api/session/verify', async (req, res) => {
   const { sessionId, token, refreshToken } = req.body;
   try {
@@ -149,25 +145,29 @@ app.post('/api/session/verify', async (req, res) => {
   }
 });
 
-// In server.js, update the scopes in your /api/spotify/login route
-app.get('/api/spotify/login', async(req, res) => {
+app.get('/api/spotify/login', (req, res) => {
   const scopes = [
-    'user-read-private',           // Required for basic user info
-    'user-read-email',             // Required for user email
-    'user-read-recently-played',   // Required for recently played tracks
-    'user-top-read',               // Required for top artists and tracks
-    'playlist-read-private',       // Required for private playlists
-    'playlist-read-collaborative', // Required for collaborative playlists
-    'playlist-modify-public',      // Required for creating public playlists
-    'playlist-modify-private',     // Required for creating private playlists
-    'user-library-read',           // Required for saved tracks
-    'streaming',                   // Required for playback (if using Web Playback SDK)
-    'user-read-playback-state'     // Required for playback state (if using Web Playback SDK)
+    'user-read-private', 'user-read-email', 'user-read-recently-played', 
+    'user-top-read', 'playlist-read-private', 'user-library-read',
+    'playlist-modify-public', 'playlist-modify-private'
   ];
-  res.json({ url: spotifyApi.createAuthorizeURL(scopes, null, 'code') });
+
+  // Ensure `clientId` is set before using it
+  if (!process.env.SPOTIFY_CLIENT_ID) {
+    return res.status(500).json({ error: "Missing Spotify Client ID" });
+  }
+
+  const authUrl = `https://accounts.spotify.com/authorize?` + 
+    `client_id=${process.env.SPOTIFY_CLIENT_ID}` + 
+    `&response_type=code` + 
+    `&redirect_uri=${encodeURIComponent(process.env.REDIRECT_URI)}` + 
+    `&scope=${encodeURIComponent(scopes.join(" "))}` + 
+    `&show_dialog=true`;
+
+  res.json({ url: authUrl });
 });
 
-// Spotify callback route
+
 app.post('/api/spotify/callback', async (req, res) => {
   const { code } = req.body;
   
@@ -189,29 +189,17 @@ app.post('/api/spotify/callback', async (req, res) => {
       });
 
   } catch (err) {
-      console.error("Spotify Authentication Error:", err);
-
-      let errorMessage = "Authentication failed";
-      if (err.body && err.body.error_description) {
-          errorMessage = err.body.error_description;
-      }
-
-      res.status(400).json({
-          error: errorMessage,
-          details: err.message,
-      });
+    console.error("Spotify Authentication Error:", err);
+    res.status(400).json({ error: "Authentication failed", details: err.message });
   }
 });
 
 app.get('/api/spotify/tracks', async (req, res) => {
-  const { sessionId } = req.query;
-
   try {
+    const { sessionId } = req.query;
     const session = await validateSession(sessionId);
-    spotifyApi.setAccessToken(session.spotifyAccessToken);
-
-    // Fetch user's saved tracks
     const savedTracks = await spotifyApi.getMySavedTracks({ limit: 50 });
+    
     const tracks = savedTracks.body.items.map(item => ({
       id: item.track.id,
       name: item.track.name,
@@ -228,7 +216,6 @@ app.get('/api/spotify/tracks', async (req, res) => {
   }
 });
 
-
 app.post('/api/chat', async (req, res) => {
   const { message, sessionId } = req.body;
   console.log("Received chat request:", { message, sessionId });
@@ -237,18 +224,11 @@ app.post('/api/chat', async (req, res) => {
     // Validate session and set access token
     const session = await validateSession(sessionId);
     console.log("Session validated:", session.sessionId);
-    spotifyApi.setAccessToken(session.spotifyAccessToken); // Set the access token
-    console.log("Access token set for Spotify API:", session.spotifyAccessToken.substring(0, 10) + "...");
-
-    try {
-      const me = await spotifyApi.getMe();
-      console.log("Spotify user verified:", me.body.id);
-    } catch (spotifyErr) {
-      console.error("Spotify API verification error:", spotifyErr);
-      throw new Error("Spotify API authentication failed");
-    }
-
-
+    
+    // Ensure access token is set for all subsequent Spotify API calls
+    spotifyApi.setAccessToken(session.spotifyAccessToken);
+    
+    // Get chat history
     const chatSession = await ChatSession.findOne({ sessionId });
     let conversationHistory = [];
     
@@ -281,90 +261,116 @@ app.post('/api/chat', async (req, res) => {
     const responseText = emotionAnalysis.generatedResponse;
 
     let tracks = [];
+    
+    // Fetch user-specific data with better error handling
     try {
-      // Fetch user-specific data if available
-      let recentTracks, topArtists, userPlaylists;
-    
-      // Fetch recently played tracks
+      console.log("Attempting to fetch user-specific data with token:", session.spotifyAccessToken.substring(0, 10) + "...");
+      
+      // Verify the token works by getting user profile first
       try {
-        console.log(session.spotifyAccessToken);
-        recentTracks = await spotifyApi.getMyRecentlyPlayedTracks({ limit: 5 });
-      
-        // Fetch top artists
-        topArtists = await spotifyApi.getMyTopArtists({ limit: 5, time_range: 'medium_term' });
-      
-        // Fetch user playlists
-        userPlaylists = await spotifyApi.getUserPlaylists({ limit: 5 });
-      } catch (error) {
-        console.error("Spotify API Error:", error);
+        const me = await spotifyApi.getMe();
+        console.log("Successfully retrieved user profile for:", me.body);
+      } catch (profileError) {
+        console.error("Failed to fetch user profile - token may be invalid:", profileError);
+        throw new Error("Authentication error - please login again");
       }
-    
-      // Process recently played tracks
-      if (recentTracks?.body?.items?.length) {
-        tracks = recentTracks.body.items.map(item => ({
-          id: item.track.id,
-          name: item.track.name,
-          artist: item.track.artists[0]?.name || 'Unknown Artist',
-          image: item.track.album?.images[0]?.url || null,
-          uri: item.track.uri
-        }));
+      
+      // Now fetch recent tracks, top artists and playlists
+      try {
+        const recentTracks = await spotifyApi.getMyRecentlyPlayedTracks({ limit: 5 });
+        console.log("Recent Tracks Response:", JSON.stringify(recentTracks.body, null, 2));
+        
+        if (recentTracks?.body?.items?.length) {
+          tracks = recentTracks.body.items.map(item => ({
+            id: item.track.id,
+            name: item.track.name,
+            artist: item.track.artists[0]?.name || 'Unknown Artist',
+            image: item.track.album?.images[0]?.url || null,
+            uri: item.track.uri
+          }));
+        }
+      } catch (recentError) {
+        console.error("Failed to fetch recent tracks:", recentError);
       }
-    
-      // Process top artists and their top tracks
-      if (tracks.length < 5 && topArtists?.body?.items?.length) {
-        for (const artist of topArtists.body.items) {
-          try {
-            const artistTracks = await spotifyApi.getArtistTopTracks(artist.id, 'IN'); // 'US' is the market code
-            if (artistTracks?.body?.tracks?.length) {
-              tracks = [
-                ...tracks,
-                ...artistTracks.body.tracks.map(track => ({
-                  id: track.id,
-                  name: track.name,
-                  artist: track.artists[0]?.name || 'Unknown Artist',
-                  image: track.album?.images[0]?.url || null,
-                  uri: track.uri
-                }))
-              ];
+      
+      // Fetch top artists only if we need more tracks
+      if (tracks.length < 5) {
+        try {
+          const topArtists = await spotifyApi.getMyTopArtists({ limit: 5, time_range: 'medium_term' });
+          console.log(`Retrieved ${topArtists.body.items.length} top artists`);
+          
+          for (const artist of topArtists.body.items) {
+            try {
+              const artistTracks = await spotifyApi.getArtistTopTracks(artist.id, 'IN');
+              if (artistTracks?.body?.tracks?.length) {
+                tracks = [
+                  ...tracks,
+                  ...artistTracks.body.tracks.map(track => ({
+                    id: track.id,
+                    name: track.name,
+                    artist: track.artists[0]?.name || 'Unknown Artist',
+                    image: track.album?.images[0]?.url || null,
+                    uri: track.uri
+                  }))
+                ];
+              }
+              if (tracks.length >= 10) break;
+            } catch (artistTracksError) {
+              console.error(`Failed to fetch tracks for artist ${artist.name}:`, artistTracksError);
             }
-            if (tracks.length >= 10) break; // Stop if we have enough tracks
-          } catch (error) {
-            console.error("Failed to fetch artist top tracks:", error);
           }
+        } catch (topArtistsError) {
+          console.error("Failed to fetch top artists:", topArtistsError);
         }
       }
-    
-      // Process user playlists
-      if (tracks.length < 5 && userPlaylists?.body?.items?.length) {
-        for (const playlist of userPlaylists.body.items) {
-          try {
-            const playlistTracks = await spotifyApi.getPlaylistTracks(playlist.id, { limit: 10 });
-            if (playlistTracks?.body?.items?.length) {
-              tracks = [
-                ...tracks,
-                ...playlistTracks.body.items.map(item => ({
-                  id: item.track.id,
-                  name: item.track.name,
-                  artist: item.track.artists[0]?.name || 'Unknown Artist',
-                  image: item.track.album?.images[0]?.url || null,
-                  uri: item.track.uri
-                }))
-              ];
+      
+      // Fetch user playlists only if we still need more tracks
+      if (tracks.length < 5) {
+        try {
+          const userPlaylists = await spotifyApi.getUserPlaylists({ limit: 5 });
+          console.log(`Retrieved ${userPlaylists.body.items.length} user playlists`);
+          
+          for (const playlist of userPlaylists.body.items) {
+            try {
+              const playlistTracks = await spotifyApi.getPlaylistTracks(playlist.id, { limit: 10 });
+              if (playlistTracks?.body?.items?.length) {
+                tracks = [
+                  ...tracks,
+                  ...playlistTracks.body.items
+                    .filter(item => item.track) // Make sure there's a track object
+                    .map(item => ({
+                      id: item.track.id,
+                      name: item.track.name,
+                      artist: item.track.artists[0]?.name || 'Unknown Artist',
+                      image: item.track.album?.images[0]?.url || null,
+                      uri: item.track.uri
+                    }))
+                ];
+              }
+              if (tracks.length >= 10) break;
+            } catch (playlistTracksError) {
+              console.error(`Failed to fetch tracks for playlist ${playlist.name}:`, playlistTracksError);
             }
-            if (tracks.length >= 10) break; // Stop if we have enough tracks
-          } catch (error) {
-            console.error("Failed to fetch playlist tracks:", error);
           }
+        } catch (userPlaylistsError) {
+          console.error("Failed to fetch user playlists:", userPlaylistsError);
         }
       }
-    
-      console.log("Final Tracks:", tracks);
     } catch (error) {
       console.error("Error fetching user-specific data:", error);
+      
+      // If it's an authentication error, send a special response
+      if (error.message.includes("Authentication error")) {
+        return res.status(401).json({ 
+          error: "Authentication required",
+          details: error.message
+        });
+      }
     }
     
     // Fallback to genre-based search if needed
     if (tracks.length < 5) {
+      console.log("Falling back to genre-based recommendations");
       try {
         for (const genre of recommendedGenres) {
           const searchResults = await spotifyApi.search(`genre:${genre}`, ['track'], { limit: 3 });
@@ -385,6 +391,7 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
+    // Ensure unique tracks and limit to 10
     const uniqueTracks = tracks.reduce((unique, track) => {
       if (!unique.some(t => t.id === track.id)) {
         unique.push(track);
@@ -392,6 +399,9 @@ app.post('/api/chat', async (req, res) => {
       return unique;
     }, []).slice(0, 10);
 
+    console.log(`Returning ${uniqueTracks.length} tracks to client`);
+
+    // Save message to chat history
     if (chatSession) {
       chatSession.messages.push({
         text: message,
@@ -431,8 +441,6 @@ app.post('/api/chat', async (req, res) => {
     });
   }
 });
-
-// Create playlist endpoint
 app.post('/api/playlist/create', async (req, res) => {
   const { name, trackUris, sessionId } = req.body;
   try {
@@ -448,35 +456,24 @@ app.post('/api/playlist/create', async (req, res) => {
 });
 
 app.post('/api/spotify/refresh', async (req, res) => {
-  const { refreshToken, sessionId } = req.body;
-  if (!refreshToken || !sessionId) {
-    return res.status(400).json({ error: "Missing refresh token or session ID" });
-  }
-
   try {
-    // Find the session first
+    const { refreshToken, sessionId } = req.body;
+    if (!refreshToken || !sessionId) return res.status(400).json({ error: "Missing refresh token or session ID" });
+
     const session = await Session.findOne({ sessionId });
-    if (!session) {
-      return res.status(404).json({ error: "Session not found" });
-    }
-    
-    // Set refresh token and refresh
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
     spotifyApi.setRefreshToken(refreshToken);
     const data = await spotifyApi.refreshAccessToken();
 
-    // Update session
     session.spotifyAccessToken = data.body.access_token;
     session.expiresIn = data.body.expires_in;
     session.timestamp = new Date();
     await session.save();
 
-    res.json({
-      accessToken: data.body.access_token,
-      expiresIn: data.body.expires_in,
-    });
+    res.json({ accessToken: data.body.access_token, expiresIn: data.body.expires_in });
   } catch (err) {
     console.error("Token refresh error:", err);
-    // If refresh failed, client should re-authenticate
     res.status(401).json({ error: "Failed to refresh token. Please re-authenticate." });
   }
 });
@@ -487,6 +484,21 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Internal Server Error" });
 });
 
-// Start server
+const apiRequest = async (apiFunc, retry = true) => {
+  try {
+    return await apiFunc();
+  } catch (error) {
+    if (error.response?.status === 401 && retry) {
+      console.log("Unauthorized error, trying token refresh...");
+      const newToken = await refreshToken();
+      if (newToken) {
+        return await apiRequest(apiFunc, false); // Retry the request once
+      }
+    }
+    throw error;
+  }
+};
+
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

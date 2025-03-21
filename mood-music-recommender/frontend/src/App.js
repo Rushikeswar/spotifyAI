@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import styled from 'styled-components';
 import Login from './components/Login';
 import Callback from './components/Callback';
 import ChatInterface from './components/ChatInterface';
 import axios from 'axios';
+import { refreshToken } from "./auth";
+
 const AppContainer = styled.div`
   text-align: center;
   height: 100vh;
@@ -21,106 +23,72 @@ const Header = styled.header`
 `;
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
-// Add this to App.js
 
 function App() {
   const [token, setToken] = useState(null);
   const [sessionId, setSessionId] = useState(null);
   const [loading, setLoading] = useState(true);
-  const refreshToken = async () => {
-    const refreshToken = localStorage.getItem('spotify_refresh_token');
-    const sessionId = localStorage.getItem('session_id');
-    
-    if (!refreshToken || !sessionId) {
-      throw new Error('No refresh token or session ID available');
-    }
-    
-    try {
-      const response = await axios.post(`${API_URL}/api/spotify/refresh`, {
-        refreshToken,
-        sessionId
-      });
-      
-      if (response.data.accessToken) {
-        const newToken = response.data.accessToken;
-        localStorage.setItem('spotify_token', newToken);
-        setToken(newToken);
-        return newToken;
-      } else {
-        throw new Error('No access token in response');
-      }
-    } catch (error) {
-      console.error('Token refresh failed:', error);
-      handleLogout();
-      throw error;
-    }
-  };
   useEffect(() => {
-      async function verifySession() {
-        const storedToken = localStorage.getItem('spotify_token');
-        const storedSessionId = localStorage.getItem('session_id');
-        const storedRefreshToken = localStorage.getItem('spotify_refresh_token');
-      
-        if (storedSessionId) {
-          try {
-            // Try to verify and refresh token if needed
-            const response = await fetch(`${API_URL}/api/session/verify`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                sessionId: storedSessionId, 
-                token: storedToken, 
-                refreshToken: storedRefreshToken 
-              }),
-            });
-      
-            const data = await response.json();
-            if (data.valid) {
-              setToken(data.accessToken);
-              setSessionId(data.sessionId);
-              // Update localStorage with potentially refreshed token
-              localStorage.setItem('spotify_token', data.accessToken);
-              localStorage.setItem('session_id', data.sessionId);
-            } else {
-              console.log("Session invalid. Logging out.");
-              handleLogout();
-            }
-          } catch (error) {
-            console.error("Session verification failed:", error);
-            handleLogout();
-          }
+    async function verifySession() {
+      if (!sessionId || !token) {
+        console.log("No session or token, redirecting to login.");
+        setLoading(false);
+        return;
+      }
+      try {
+        const response = await axios.post(`${API_URL}/api/session/verify`, {
+          sessionId,
+          token,
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (response.data.valid) {
+          const newAccessToken = response.data.accessToken || token;
+          setToken(newAccessToken);
+          setSessionId(response.data.sessionId || sessionId);
+          localStorage.setItem("spotify_token", newAccessToken);
+          localStorage.setItem("session_id", response.data.sessionId || sessionId);
         } else {
-          console.log("No stored session. Redirecting to login.");
           handleLogout();
         }
-        setLoading(false);
+      } catch (error) {
+        console.error("Session verification failed:", error);
+        handleLogout();
       }
-    
-    
-
-    verifySession();
-  }, []);
-
-  const handleLogin = (accessToken, sessionId, refreshToken) => {
-    setToken(accessToken);
-    setSessionId(sessionId);
-    localStorage.setItem('spotify_token', accessToken);
-    localStorage.setItem('session_id', sessionId);
-    if (refreshToken) {
-      localStorage.setItem('spotify_refresh_token', refreshToken);
+      setLoading(false);
     }
-  };
-
+    verifySession();
+  }, [sessionId, token]);
   const handleLogout = () => {
-    setToken(null);
-    setSessionId(null);
-    localStorage.removeItem('spotify_token');
-    localStorage.removeItem('spotify_refresh_token');
-    localStorage.removeItem('session_id');
-    sessionStorage.removeItem('auth_in_progress'); // Ensure it's removed on logout
+    localStorage.clear();
+    sessionStorage.removeItem("auth_in_progress");
+    window.location.href = "/login";
   };
+  const apiRequest = useCallback(
+    async (apiFunc, retry = true) => {
+      try {
+        const response = await apiFunc({
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return response;
+      } catch (error) {
+        if (error.response?.status === 401 && retry) {
+          console.log("Unauthorized error, attempting token refresh...");
+          const newToken = await refreshToken();
+          if (newToken) {
+            localStorage.setItem("spotify_token", newToken);
+            return await apiRequest(apiFunc, false);
+          }
+        }
+        throw error;
+      }
+    },
+    [token]
+  );
   
-  
+
+ // ✅ Dependency array updated
 
   if (loading) {
     return <AppContainer>Loading...</AppContainer>;
@@ -135,9 +103,15 @@ function App() {
         </Header>
 
         <Routes>
-          <Route path="/login" element={token ? <Navigate to="/chat" /> : <Login />} />
-          <Route path="/callback" element={<Callback onLogin={handleLogin} />} />
-          <Route path="/chat" element={token ? <ChatInterface token={token} sessionId={sessionId} refreshToken={refreshToken} /> : <Navigate to="/login" />} />
+          <Route path="/login" element={token ? <Navigate to="/chat" /> : <Login apiRequest={apiRequest}/>} />
+          <Route path="/callback" element={<Callback apiRequest={apiRequest} onLogin={(t, s, r) => {
+          setToken(t);
+          setSessionId(s);
+          localStorage.setItem("spotify_token", t);
+          localStorage.setItem("session_id", s);
+          if (r) localStorage.setItem("spotify_refresh_token", r);
+        }} />} />
+         <Route path="/chat" element={token ? <ChatInterface token={token} sessionId={sessionId} refreshToken={refreshToken} apiRequest={apiRequest}/> : <Navigate to="/login" />} />
           <Route path="/" element={<Navigate to={token ? "/chat" : "/login"} />} />
         </Routes>
       </AppContainer>
@@ -145,43 +119,33 @@ function App() {
   );
 }
 
-// Set up axios interceptors
+// ✅ Axios Interceptors for Handling Token Expiry
 axios.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    
-    // If the error status is 401 and we haven't retried yet
+
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
-      
       try {
-        const refreshToken = localStorage.getItem('spotify_refresh_token');
-        const sessionId = localStorage.getItem('session_id');
-        
-        if (refreshToken && sessionId) {
-          const response = await axios.post(`${API_URL}/api/spotify/refresh`, {
-            refreshToken,
-            sessionId
-          });
-          
-          if (response.data.accessToken) {
-            localStorage.setItem('spotify_token', response.data.accessToken);
-            axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.accessToken}`;
-            originalRequest.headers['Authorization'] = `Bearer ${response.data.accessToken}`;
-            return axios(originalRequest);
-          }
+        const newToken = await refreshToken();
+        if (newToken) {
+          localStorage.setItem("spotify_token", newToken);
+          originalRequest.headers["Authorization"] = `Bearer ${newToken}`;
+          return axios(originalRequest);
         }
       } catch (refreshError) {
-        console.error("Token refresh interceptor failed:", refreshError);
+        console.error("Token refresh failed, logging out:", refreshError);
       }
-      
-      // If refresh failed, redirect to login
-      window.location.href = '/login';
-      return Promise.reject(error);
     }
-    
+
+    localStorage.clear();
+    sessionStorage.removeItem("auth_in_progress");
+    window.location.href = "/login";
+
     return Promise.reject(error);
   }
 );
+
+
 export default App;

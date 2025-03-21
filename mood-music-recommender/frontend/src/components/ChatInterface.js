@@ -90,7 +90,7 @@ const PlayerContainer = styled.div`
   background-color: #181818;
 `;
 const API_URL = 'http://localhost:5000';
-function ChatInterface({ token, sessionId }) {
+function ChatInterface({ token, sessionId,apiRequest }) {
   const navigate = useNavigate();
   const [isSessionValid, setIsSessionValid] = useState(false);
   const [validatedSessionId, setValidatedSessionId] = useState(sessionId);
@@ -112,17 +112,22 @@ function ChatInterface({ token, sessionId }) {
       try {
         const storedToken = localStorage.getItem('spotify_token');
         const storedSessionId = localStorage.getItem('session_id');
-        const storedRefreshToken = localStorage.getItem('spotify_refresh_token');
   
-        if (!storedSessionId || !storedToken) return navigate('/login');
+        if (!storedSessionId || !storedToken) {
+          navigate('/login');
+          return;
+        }
   
-        const response = await axios.post(`${API_URL}/api/session/verify`, {
-          sessionId: storedSessionId,
-          token: storedToken,
-          refreshToken: storedRefreshToken
-        });
+        const response = await apiRequest(() =>
+          axios.post(`${API_URL}/api/session/verify`, {
+            sessionId: storedSessionId,
+            token: storedToken
+          })
+        );
+        
   
         if (response.data.valid) {
+          console.log("Session verified successfully");
           setIsSessionValid(true);
           setValidatedSessionId(response.data.sessionId || storedSessionId);
           setValidatedToken(response.data.accessToken || storedToken);
@@ -139,13 +144,18 @@ function ChatInterface({ token, sessionId }) {
       }
     };
     verifySession();
-  }, [navigate]);
+  }, [navigate,apiRequest]);
+
+
   useEffect(() => {
     const fetchTracks = async () => {
       try {
-        const response = await axios.get(`http://localhost:5000/api/spotify/tracks`, {
-          params: { sessionId: validatedSessionId }
-        });
+        const response = await apiRequest(async () => 
+          axios.get(`http://localhost:5000/api/spotify/tracks`, {
+            params: { sessionId: validatedSessionId }
+          })
+        );
+        
         setTracks(response.data.tracks);
       } catch (error) {
         console.error("Failed to fetch tracks:", error);
@@ -155,7 +165,9 @@ function ChatInterface({ token, sessionId }) {
     if (validatedSessionId) {
       fetchTracks();
     }
-  }, [validatedSessionId]);
+  }, [validatedSessionId,apiRequest]);
+
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -173,17 +185,14 @@ function ChatInterface({ token, sessionId }) {
     setMessages(prev => [...prev, { id: loadingMsgId, text: "Thinking...", isUser: false, isLoading: true }]);
     
     try {
-      const currentToken = localStorage.getItem('spotify_token');
-      console.log("Sending chat request with:", {
-        message: userMessage,
-        sessionId: validatedSessionId,
-        token: `${currentToken.substring(0, 10)}...`
-      });
   
-      const response = await axios.post(`http://localhost:5000/api/chat`, {
-        message: userMessage,
-        sessionId: validatedSessionId
-      });
+      const response = await apiRequest(async () => 
+        axios.post(`http://localhost:5000/api/chat`, {
+          message: userMessage,
+          sessionId: validatedSessionId
+        })
+      );
+      
   
       console.log("Chat API Response:", response.data);
       
@@ -193,27 +202,18 @@ function ChatInterface({ token, sessionId }) {
       // Add the actual response
       setMessages(prev => [...prev, { text: response.data.response, isUser: false }]);
   
-      if (response.data.tracks && response.data.tracks.length > 0) {
+      if (response.data.tracks) {
         setTracks(response.data.tracks);
-        setPlaybackUris(response.data.tracks.map(track => track.uri));
+        setPlaybackUris(response.data.tracks.map((track) => track.uri));
       }
-      
       if (response.data.mood) {
         setCurrentMood(response.data.mood);
       }
     } catch (error) {
       console.error("Chat API Error:", error.response?.data || error.message);
       
-      // Remove loading message
-      setMessages(prev => prev.filter(msg => msg.id !== loadingMsgId));
-      
-      // Add error message
-      setMessages(prev => [...prev, { 
-        text: "Sorry, I couldn't process your request. Please try again.", 
-        isUser: false 
-      }]);
-      
-      handleApiError(error);
+      setMessages((prev) => [...prev, { text: "Sorry, I couldn't process your request.", isUser: false }]);
+  
     }
   };
   
@@ -221,63 +221,23 @@ function ChatInterface({ token, sessionId }) {
   const createPlaylist = async () => {
     if (!tracks.length || !isSessionValid) return;
     setIsCreatingPlaylist(true);
-    const name = playlistName || `My ${currentMood.replace('_', ' ')} Playlist`;
     try {
-       await axios.post(`http://localhost:5000/api/playlist/create`, {
-        name,
-        trackUris: tracks.map(track => track.uri),
-        sessionId: validatedSessionId
-      });
+      await apiRequest(async () => 
+        axios.post(`http://localhost:5000/api/playlist/create`, {
+          name: playlistName || `My ${currentMood.replace('_', ' ')} Playlist`,
+          trackUris: tracks.map((track) => track.uri),
+          sessionId: validatedSessionId
+        })
+      );
       
-      setMessages(prev => [...prev, { 
-        text: `Created playlist "${name}" successfully! You can find it in your Spotify account.`, 
-        isUser: false 
-      }]);
-    } catch (error) {handleApiError(error);}
+      
+      setMessages((prev) => [...prev, { text: "Playlist created successfully!", isUser: false }]);
+    } catch (error) { console.error("Playlist creation failed:", error);}
     finally{      setIsCreatingPlaylist(false);
       setPlaylistName('');}
   };
 
-  const handleApiError = async (error) => {
-    if (error.response?.status === 401) {
-      try {
-        const storedRefreshToken = localStorage.getItem('spotify_refresh_token');
-        const storedSessionId = localStorage.getItem('session_id');
-        
-        if (!storedRefreshToken || !storedSessionId) {
-          // If we don't have refresh token or session ID, redirect to login
-          navigate('/login');
-          return;
-        }
-        
-        const response = await axios.post(`${API_URL}/api/spotify/refresh`, {
-          refreshToken: storedRefreshToken,
-          sessionId: storedSessionId,
-        });
-  
-        if (response.data.accessToken) {
-          // Update local storage and state with new token
-          localStorage.setItem('spotify_token', response.data.accessToken);
-          setValidatedToken(response.data.accessToken);
-          
-          // Retry the original request that failed (you might want to implement this)
-          return;
-        }
-      } catch (refreshError) {
-        console.error("Token refresh failed:", refreshError);
-        // Clear invalid tokens and redirect to login
-        localStorage.removeItem('spotify_token');
-        localStorage.removeItem('spotify_refresh_token');
-        navigate('/login');
-        return;
-      }
-    }
-    
-    setMessages(prev => [...prev, { 
-      text: "Sorry, something went wrong. Please try again.", 
-      isUser: false 
-    }]);
-  };
+
   return (
     <ChatContainer>
       <ChatPanel>

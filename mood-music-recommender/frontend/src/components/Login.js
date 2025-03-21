@@ -51,7 +51,7 @@ const ErrorMessage = styled.div`
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
 
-function Login() {
+function Login({apiRequest}) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   
@@ -60,7 +60,8 @@ function Login() {
     setError(null);
     
     try {
-      const response = await axios.get(`${API_URL}/api/spotify/login`);
+      const response = await apiRequest(async () => axios.get(`${API_URL}/api/spotify/login`));
+
       window.location.href = response.data.url;
     } catch (error) {
       console.error('Login error:', error);
