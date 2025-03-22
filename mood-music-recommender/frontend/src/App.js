@@ -21,7 +21,6 @@ const Header = styled.header`
   background-color: #1db954;
   color: white;
 `;
-
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 function App() {
@@ -99,7 +98,25 @@ function App() {
       <AppContainer>
         <Header>
           <h1>Mood Music Recommender</h1>
-          {token && <button onClick={handleLogout}>Logout</button>}
+          {token && (
+  <button
+    style={{
+      backgroundColor: "white",
+      color: "#1db954",
+      border: "none",
+      padding: "10px 20px",
+      fontSize: "20px",
+      fontStyle: "bold",
+      cursor: "pointer",
+      marginTop: "20px",
+      borderRadius: "15px",
+    }}
+    onClick={handleLogout}
+  >
+    Logout
+  </button>
+)}
+
         </Header>
 
         <Routes>

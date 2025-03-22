@@ -10,8 +10,8 @@ def analyze_text():
     print(data)
     text = data.get('text', '')
     context = data.get('context', [])
-    
-    result = detect_emotion_and_generate_response(text, context)
+    userGenres=data.get('userGenres', [])
+    result = detect_emotion_and_generate_response(text, context,userGenres)
     return jsonify(result)
 
 if __name__ == "__main__":
