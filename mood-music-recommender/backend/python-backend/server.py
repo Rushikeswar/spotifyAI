@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify
 from emotion_analysis import detect_emotion_and_generate_response
 from flask_cors import CORS
+import os
+
 app = Flask(__name__)
 CORS(app)
 
@@ -15,4 +17,6 @@ def analyze_text():
     return jsonify(result)
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0',port=5001)
+    # Get port from environment variable or default to 5001
+    port = int(os.environ.get("PORT", 5001))
+    app.run(host='0.0.0.0', port=port)
