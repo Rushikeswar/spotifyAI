@@ -21,7 +21,7 @@ const ErrorMessage = styled.div`
   text-align: center;
 `;
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const REACT_APP_BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
 
 function Callback({ onLogin,apiRequest }) {  
   const navigate = useNavigate();
@@ -43,22 +43,21 @@ function Callback({ onLogin,apiRequest }) {
         }
         
         setProcessingStep('Exchanging authorization code for tokens...');
-        console.log('Processing authorization code:', code.substring(0, 10) + '...');
+     
         
         // Exchange code for tokens
-        const response = await apiRequest(async () => axios.post(`${API_URL}/api/spotify/callback`, { code }));
+        const response = await apiRequest(async () => axios.post(`${REACT_APP_BACKEND_URL}/api/spotify/callback`, { code }));
 
         
         if (!response.data.accessToken) {
           throw new Error("No access token received from server");
         }
         
-        console.log('Received access token:', response.data.accessToken.substring(0, 10) + '...');
         
         // Get a session ID for the new token
         setProcessingStep('Creating session...');
         const sessionResponse = await apiRequest(async () => 
-          axios.post(`${API_URL}/api/session/verify`, {
+          axios.post(`${REACT_APP_BACKEND_URL}/api/session/verify`, {
             token: response.data.accessToken,
             refreshToken: response.data.refreshToken || null
           })
@@ -77,7 +76,6 @@ function Callback({ onLogin,apiRequest }) {
           localStorage.setItem('spotify_refresh_token', response.data.refreshToken);
         }
         
-        console.log('Session created successfully:', sessionResponse.data.sessionId);
         setProcessingStep('Authentication complete!');
         
         // Call the onLogin callback

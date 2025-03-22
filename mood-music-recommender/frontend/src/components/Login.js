@@ -48,8 +48,7 @@ const ErrorMessage = styled.div`
   max-width: 600px;
   text-align: center;
 `;
-
-const API_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
+const REACT_APP_BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
 
 function Login({apiRequest}) {
   const [isLoading, setIsLoading] = useState(false);
@@ -60,7 +59,7 @@ function Login({apiRequest}) {
     setError(null);
     
     try {
-      const response = await apiRequest(async () => axios.get(`${API_URL}/api/spotify/login`));
+      const response = await apiRequest(async () => axios.get(`${REACT_APP_BACKEND_URL}/api/spotify/login`));
 
       window.location.href = response.data.url;
     } catch (error) {

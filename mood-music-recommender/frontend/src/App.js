@@ -21,12 +21,13 @@ const Header = styled.header`
   background-color: #1db954;
   color: white;
 `;
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const REACT_APP_BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
 
 function App() {
   const [token, setToken] = useState(null);
   const [sessionId, setSessionId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [userName, setUserName] = useState('');
   useEffect(() => {
     async function verifySession() {
       if (!sessionId || !token) {
@@ -35,7 +36,7 @@ function App() {
         return;
       }
       try {
-        const response = await axios.post(`${API_URL}/api/session/verify`, {
+        const response = await axios.post(`${REACT_APP_BACKEND_URL}/api/session/verify`, {
           sessionId,
           token,
         }, {
@@ -48,6 +49,7 @@ function App() {
           setSessionId(response.data.sessionId || sessionId);
           localStorage.setItem("spotify_token", newAccessToken);
           localStorage.setItem("session_id", response.data.sessionId || sessionId);
+          setUserName(response.data.userName || "User");
         } else {
           handleLogout();
         }
@@ -98,6 +100,9 @@ function App() {
       <AppContainer>
         <Header>
           <h1>Mood Music Recommender</h1>
+          {token && (<p style={{ color: "black", fontWeight: "bold" }}>Welcome, <strong >{userName} </strong>!</p>
+)}
+
           {token && (
   <button
     style={{

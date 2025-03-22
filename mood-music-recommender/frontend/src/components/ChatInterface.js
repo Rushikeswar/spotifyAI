@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import styled from 'styled-components';
 import TrackList from './TrackList';
-import SpotifyWebPlayer from './SpotifyWebPlayer';
 import { useNavigate } from 'react-router-dom';
 
 const ChatContainer = styled.div`
@@ -81,29 +80,19 @@ const SendButton = styled.button`
     background-color: #1ED760;
   }
 `;
+const REACT_APP_BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
 
-const PlayerContainer = styled.div`
-  position: fixed;
-  bottom: 0;
-  width: 100%;
-  padding: 10px 0;
-  background-color: #181818;
-`;
-const API_URL = 'http://localhost:5000';
 function ChatInterface({ token, sessionId,apiRequest }) {
   const navigate = useNavigate();
   const [isSessionValid, setIsSessionValid] = useState(false);
   const [validatedSessionId, setValidatedSessionId] = useState(sessionId);
   const [validatedToken, setValidatedToken] = useState(token);
-  const [messages, setMessages] = useState([
-    { text: "Hi there! I'm your mood-based music assistant. How are you feeling today?", isUser: false }
-  ]);
+  const [userName, setUserName] = useState('');
+
   const [input, setInput] = useState('');
   const [tracks, setTracks] = useState([]);
   const [playbackUris, setPlaybackUris] = useState([]);
   const [currentMood, setCurrentMood] = useState('neutral');
-  const [isCreatingPlaylist, setIsCreatingPlaylist] = useState(false);
-  const [playlistName, setPlaylistName] = useState('');
   const messagesEndRef = useRef(null);
 
   // Add session verification effect
@@ -119,7 +108,7 @@ function ChatInterface({ token, sessionId,apiRequest }) {
         }
   
         const response = await apiRequest(() =>
-          axios.post(`${API_URL}/api/session/verify`, {
+          axios.post(`${REACT_APP_BACKEND_URL}/api/session/verify`, {
             sessionId: storedSessionId,
             token: storedToken
           })
@@ -127,11 +116,11 @@ function ChatInterface({ token, sessionId,apiRequest }) {
         
   
         if (response.data.valid) {
-          console.log("Session verified successfully");
           setIsSessionValid(true);
           setValidatedSessionId(response.data.sessionId || storedSessionId);
           setValidatedToken(response.data.accessToken || storedToken);
-          
+          // Store user's name
+          setUserName(response.data.userName || "there"); 
           // Make sure we're always using the most current token
           localStorage.setItem('spotify_token', response.data.accessToken || storedToken);
           localStorage.setItem('session_id', response.data.sessionId || storedSessionId);
@@ -145,13 +134,21 @@ function ChatInterface({ token, sessionId,apiRequest }) {
     };
     verifySession();
   }, [navigate,apiRequest]);
+  const [messages, setMessages] = useState([
+    { text: `Hi ${userName} I'm your mood-based music assistant. How are you feeling today?`, isUser: false }
+  ]);
 
+  useEffect(() => {
+    setMessages([
+      { text: `Hi ${userName}! I'm your mood-based music assistant. How are you feeling today?`, isUser: false }
+    ]);
+  }, [userName]);
 
   useEffect(() => {
     const fetchTracks = async () => {
       try {
         const response = await apiRequest(async () => 
-          axios.get(`http://localhost:5000/api/spotify/tracks`, {
+          axios.get(`${REACT_APP_BACKEND_URL}/api/tracks`, {
             params: { sessionId: validatedSessionId }
           })
         );
@@ -187,14 +184,12 @@ function ChatInterface({ token, sessionId,apiRequest }) {
     try {
   
       const response = await apiRequest(async () => 
-        axios.post(`http://localhost:5000/api/chat`, {
+        axios.post(`${REACT_APP_BACKEND_URL}/api/chat`, {
           message: userMessage,
           sessionId: validatedSessionId
         })
       );
       
-  
-      console.log("Chat API Response:", response.data);
       
       // Remove loading message
       setMessages(prev => prev.filter(msg => msg.id !== loadingMsgId));
@@ -217,26 +212,6 @@ function ChatInterface({ token, sessionId,apiRequest }) {
     }
   };
   
-
-  const createPlaylist = async () => {
-    if (!tracks.length || !isSessionValid) return;
-    setIsCreatingPlaylist(true);
-    try {
-      await apiRequest(async () => 
-        axios.post(`http://localhost:5000/api/playlist/create`, {
-          name: playlistName || `My ${currentMood.replace('_', ' ')} Playlist`,
-          trackUris: tracks.map((track) => track.uri),
-          sessionId: validatedSessionId
-        })
-      );
-      
-      
-      setMessages((prev) => [...prev, { text: "Playlist created successfully!", isUser: false }]);
-    } catch (error) { console.error("Playlist creation failed:", error);}
-    finally{      setIsCreatingPlaylist(false);
-      setPlaylistName('');}
-  };
-
 
   return (
     <ChatContainer>
@@ -270,42 +245,11 @@ function ChatInterface({ token, sessionId,apiRequest }) {
           <>
             <TrackList tracks={tracks} />
             
-            <div style={{ marginTop: '20px' }}>
-              <h3>Save as Playlist</h3>
-              <input
-                value={playlistName}
-                onChange={(e) => setPlaylistName(e.target.value)}
-                placeholder={`My ${currentMood.replace('_', ' ')} Playlist`}
-                style={{ padding: '8px', marginRight: '10px', borderRadius: '4px', border: 'none' }}
-                disabled={!isSessionValid}
-              />
-              <button 
-                onClick={createPlaylist}
-                disabled={isCreatingPlaylist || !isSessionValid}
-                style={{ 
-                  padding: '8px 15px', 
-                  backgroundColor: '#1DB954',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: isSessionValid ? 'pointer' : 'not-allowed',
-                  opacity: isSessionValid ? 1 : 0.7
-                }}
-              >
-                {isCreatingPlaylist ? 'Creating...' : 'Create Playlist'}
-              </button>
-            </div>
           </>
         ) : (
           <p>Ask me for music recommendations to see tracks here!</p>
         )}
       </MusicPanel>
-      
-      {/* {playbackUris.length > 0 && (
-        <PlayerContainer>
-          <SpotifyWebPlayer token={validatedToken} uris={playbackUris} />
-        </PlayerContainer>
-      )} */}
     </ChatContainer>
   );
 }
