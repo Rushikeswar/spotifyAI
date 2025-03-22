@@ -5,4 +5,3 @@ scipy
 sentence-transformers
 torch
 transformers
-gunicorn
