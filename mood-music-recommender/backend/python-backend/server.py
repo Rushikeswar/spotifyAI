@@ -2,14 +2,13 @@ from flask import Flask, request, jsonify
 from emotion_analysis import detect_emotion_and_generate_response
 from flask_cors import CORS
 import os
-
+from dotenv import load_dotenv
+load_dotenv()  # This loads the variables from .env
 app = Flask(__name__)
 CORS(app)
-
 @app.route("/analyze", methods=["POST"])
 def analyze_text():
     data = request.json
-    print(data)
     text = data.get('text', '')
     context = data.get('context', [])
     userGenres=data.get('userGenres', [])

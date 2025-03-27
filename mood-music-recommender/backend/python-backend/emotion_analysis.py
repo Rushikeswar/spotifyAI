@@ -1,9 +1,17 @@
-import numpy as np
 import random
-import scipy.spatial
+import scipy.spatial # Import OpenAI for GPT-based response generation
 from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+import random
+import requests
+import torch
+from transformers import pipeline
+import os
 
-# Load a free and lightweight sentence embedding model
+load_dotenv()  # This loads the variables from .env
+
+
+# Load a lightweight sentence embedding model
 model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
 
 # Define emotion reference sentences
@@ -34,59 +42,10 @@ INTENT_SENTENCES = {
 # Precompute intent embeddings
 INTENTS = {key: model.encode(sentence) for key, sentence in INTENT_SENTENCES.items()}
 
-# Toxic terms list (can be expanded)
+# Toxic terms list
 TOXIC_TERMS = ["hate", "kill", "hurt", "stupid", "idiot", "damn", "fuck", "shit"]
 
-# Define genre association with emotions
-GENRE_EMOTION_MAPPING = {
-    "happy": ["pop", "dance", "electronic", "funk", "disco", "reggae"],
-    "sad": ["blues", "acoustic", "classical", "jazz", "indie", "folk"],
-    "angry": ["metal", "rock", "punk", "hardcore", "industrial", "grunge"],
-    "neutral": ["alternative", "indie", "pop rock", "ambient", "world"],
-    "excited": ["edm", "dance", "house", "techno", "dubstep", "drum and bass"],
-    "relaxed": ["lo-fi", "ambient", "chillout", "jazz", "classical", "acoustic"],
-    "nostalgic": ["classic rock", "oldies", "80s", "70s", "90s", "soul", "motown"]
-}
-
-# Define genre descriptions for semantic matching
-GENRE_DESCRIPTIONS = {
-    "pop": "Catchy, upbeat commercial music with strong melodies",
-    "rock": "Guitar-driven music with attitude and energy",
-    "hip hop": "Rhythmic music with rapping and urban beats",
-    "jazz": "Improvisational music with complex harmonies and rhythms",
-    "classical": "Orchestral or chamber music from the western tradition",
-    "electronic": "Computer-generated music with synthesizers and digital sounds",
-    "country": "Folk-derived music with storytelling and rural themes",
-    "r&b": "Rhythm and blues with soulful vocals and grooves",
-    "metal": "Heavy, aggressive rock music with distorted guitars",
-    "indie": "Alternative music from independent labels with unique sounds",
-    "folk": "Traditional acoustic music with storytelling",
-    "blues": "Emotional music with specific chord progressions and soulful vocals",
-    "reggae": "Jamaican music with offbeat rhythms and positive messages",
-    "punk": "Fast, aggressive rock with anti-establishment themes",
-    "soul": "Emotional, gospel-influenced r&b music",
-    "funk": "Rhythmic dance music with prominent bass lines",
-    "disco": "Upbeat dance music from the 70s with four-on-the-floor beats",
-    "ambient": "Atmospheric music focusing on sound textures rather than rhythm",
-    "edm": "Electronic dance music designed for clubs and festivals",
-    "lo-fi": "Low fidelity relaxing beats, often with nostalgic elements",
-    "house": "Electronic dance music with four-on-the-floor beats and samples",
-    "techno": "Repetitive, electronic dance music with artificial sounds",
-    "acoustic": "Unplugged, natural instrument-based music",
-    "alternative": "Non-mainstream rock music with diverse influences",
-    "dubstep": "Electronic music with emphasized sub-bass and rhythmic patterns",
-    "trap": "Hip hop subgenre with heavy bass, rapid hi-hats, and dark themes",
-    "classic rock": "Rock music from the 60s to 80s with guitar solos and anthems",
-    "80s": "Synthesizer-heavy pop and rock music from the 1980s",
-    "90s": "Diverse music from the 1990s including grunge, pop, and early hip hop",
-    "oldies": "Popular music from the 50s and 60s with simple structures",
-    "grunge": "Dark, heavy rock from the early 90s with distorted guitars",
-    "drum and bass": "Fast breakbeat electronic music with heavy bass lines",
-    "chillout": "Relaxing, downtempo electronic music",
-    "world": "Music drawing from diverse global traditions and instruments"
-}
-
-# Musical characteristics based on emotion
+# # Musical characteristics based on emotion
 EMOTION_CHARACTERISTICS = {
     "happy": {
         "tempo": "fast", 
@@ -131,6 +90,16 @@ EMOTION_CHARACTERISTICS = {
         "keywords": ["oldies", "retro", "classic", "throwback", "80s", "90s", "70s"]
     }
 }
+# Define genre association with emotions
+GENRE_EMOTION_MAPPING = {
+    "happy": ["pop", "dance", "electronic", "funk", "disco", "reggae"],
+    "sad": ["blues", "acoustic", "classical", "jazz", "indie", "folk"],
+    "angry": ["metal", "rock", "punk", "hardcore", "industrial", "grunge"],
+    "neutral": ["alternative", "indie", "pop rock", "ambient", "world"],
+    "excited": ["edm", "dance", "house", "techno", "dubstep", "drum and bass"],
+    "relaxed": ["lo-fi", "ambient", "chillout", "jazz", "classical", "acoustic"],
+    "nostalgic": ["classic rock", "oldies", "80s", "70s", "90s", "soul", "motown"]
+}
 
 def detect_emotion_and_generate_response(text, context=None, userGenres=None):
     """
@@ -162,22 +131,127 @@ def detect_emotion_and_generate_response(text, context=None, userGenres=None):
     # Check for toxicity
     is_toxic = any(term in text.lower() for term in TOXIC_TERMS)
     
-    # Get top 5 emotions for secondary matching
+    # Get top 3 emotions for better matching
     top_emotions = sorted(emotion_scores.items(), key=lambda x: x[1], reverse=True)[:3]
     
-    # Find suitable genres based on emotion and user's genre preferences
+    # Recommend genres
     recommended_genres = recommend_genres(text, dominant_emotion, userGenres, context, top_emotions)
     
-    # Generate response dynamically
-    response = generate_dynamic_response(text, intent, dominant_emotion, recommended_genres, context, is_toxic)
+    # Generate response dynamically using GPT
+    response = generate_dynamic_response(text, intent, dominant_emotion, context, is_toxic)
     
     return {
         "dominantEmotion": dominant_emotion,
-        "confidence": float(emotion_scores[dominant_emotion]),
+        "confidence": confidence,
         "isToxic": is_toxic,
         "recommendedGenres": recommended_genres,
         "generatedResponse": response
     }
+
+
+
+def generate_dynamic_response(text, intent, emotion, context, is_toxic):
+
+    """
+    Generate a dynamic conversational response using a free cloud-based LLM.
+    
+    Args:
+        text (str): Original user input
+        intent (str): Detected intent
+        emotion (str): Detected emotional state
+        context (list): Conversation context
+        is_toxic (bool): Whether the input contains toxic language
+    
+    Returns:
+        str: Dynamically generated response
+    """
+    HUGGINGFACE_TOKEN=os.environ.get('HUGGINGFACE_TOKEN')
+    # Handle toxic content
+    if is_toxic:
+        return "Let's keep the conversation positive. I'm here to help."
+    
+    # Prepare inputs
+    emotion = emotion or 'neutral'
+    
+    # Construct prompt
+    prompt = (
+        f"User's emotion: {emotion}\n"
+        f"User input: {text}\n"
+        "You are an AI chatbot in a music recommendation system, but you do NOT recommend songs or genres. "
+        "Your role is to engage in friendly, human-like conversation by understanding the user's emotions and intent. "
+        "Respond naturally in a short,simple, empathetic, and engaging manner, within 20 words without discussing specific music preferences.But ask him to listen to songs generated \n"
+        "Assistant's response:" )
+    
+    try:
+        # Use a cloud-based LLM API (e.g., Hugging Face Inference API)
+        api_url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.1"
+        headers = {"Authorization": HUGGINGFACE_TOKEN}
+        payload = {"inputs": prompt, "parameters": {"temperature": 0.7, "max_length": 150}}
+        
+        response = requests.post(api_url, headers=headers, json=payload)
+        result = response.json()
+        
+        if "error" in result:
+            raise Exception(result["error"])
+        
+        generated_text = result[0]["generated_text"]
+        response_start = generated_text.find("Assistant's response:") + len("Assistant's response:")
+        clean_response = generated_text[response_start:].strip()
+
+        # Fallback responses if needed
+        if not clean_response or len(clean_response) < 20:
+            fallback_responses = [
+                "That's interesting! Tell me more.",
+                "I'd love to hear more about that.",
+                "Could you elaborate on that?"
+            ]
+            return random.choice(fallback_responses)
+        
+        return clean_response
+    
+    except Exception as e:
+        print(f"Response generation error: {e}")
+        return "I'm here to chat, but I might need a moment to get back on track."
+
+
+
+GENRE_DESCRIPTIONS = {
+    "pop": "Catchy, upbeat commercial music with strong melodies",
+    "rock": "Guitar-driven music with attitude and energy",
+    "hip hop": "Rhythmic music with rapping and urban beats",
+    "jazz": "Improvisational music with complex harmonies and rhythms",
+    "classical": "Orchestral or chamber music from the western tradition",
+    "electronic": "Computer-generated music with synthesizers and digital sounds",
+    "country": "Folk-derived music with storytelling and rural themes",
+    "r&b": "Rhythm and blues with soulful vocals and grooves",
+    "metal": "Heavy, aggressive rock music with distorted guitars",
+    "indie": "Alternative music from independent labels with unique sounds",
+    "folk": "Traditional acoustic music with storytelling",
+    "blues": "Emotional music with specific chord progressions and soulful vocals",
+    "reggae": "Jamaican music with offbeat rhythms and positive messages",
+    "punk": "Fast, aggressive rock with anti-establishment themes",
+    "soul": "Emotional, gospel-influenced r&b music",
+    "funk": "Rhythmic dance music with prominent bass lines",
+    "disco": "Upbeat dance music from the 70s with four-on-the-floor beats",
+    "ambient": "Atmospheric music focusing on sound textures rather than rhythm",
+    "edm": "Electronic dance music designed for clubs and festivals",
+    "lo-fi": "Low fidelity relaxing beats, often with nostalgic elements",
+    "house": "Electronic dance music with four-on-the-floor beats and samples",
+    "techno": "Repetitive, electronic dance music with artificial sounds",
+    "acoustic": "Unplugged, natural instrument-based music",
+    "alternative": "Non-mainstream rock music with diverse influences",
+    "dubstep": "Electronic music with emphasized sub-bass and rhythmic patterns",
+    "trap": "Hip hop subgenre with heavy bass, rapid hi-hats, and dark themes",
+    "classic rock": "Rock music from the 60s to 80s with guitar solos and anthems",
+    "80s": "Synthesizer-heavy pop and rock music from the 1980s",
+    "90s": "Diverse music from the 1990s including grunge, pop, and early hip hop",
+    "oldies": "Popular music from the 50s and 60s with simple structures",
+    "grunge": "Dark, heavy rock from the early 90s with distorted guitars",
+    "drum and bass": "Fast breakbeat electronic music with heavy bass lines",
+    "chillout": "Relaxing, downtempo electronic music",
+    "world": "Music drawing from diverse global traditions and instruments"
+}
+
 
 def recommend_genres(text, emotion, userGenres, context, top_emotions):
     """
@@ -290,57 +364,3 @@ def recommend_genres(text, emotion, userGenres, context, top_emotions):
         top_genres.extend(remaining_genres[:5-len(top_genres)])
     
     return top_genres
-
-def generate_dynamic_response(text, intent, emotion, recommended_genres, context, is_toxic):
-    """
-    Generates a fully dynamic response based on emotion, intent, and recommended genres.
-    """
-    if is_toxic:
-        return "Let's keep the conversation positive. I'm here to help."
-    
-    # Generate response based on emotion and add genre suggestion
-    if emotion == "happy":
-        base_response = random.choice([
-            "That's great to hear! Want to celebrate with some upbeat music?",
-            "Awesome! How about some energetic tracks?",
-            "Good vibes only! Any specific song requests?"
-        ])
-    elif emotion == "sad":
-        base_response = random.choice([
-            "I'm here for you. Maybe some soothing music could help?",
-            "Sad days happen. Do you have a comfort song?",
-            "Music can be healing. Want me to find some soulful tunes?"
-        ])
-    elif emotion == "angry":
-        base_response = random.choice([
-            "I get that. Some powerful music might be a good release!",
-            "Let it out! Maybe a high-energy track?",
-            "Feeling intense? I can find some hard-hitting beats."
-        ])
-    elif emotion == "nostalgic":
-        base_response = random.choice([
-            "Ah, nostalgia! Any favorite old-school tracks?",
-            "Music is a time machine! Want some retro vibes?",
-            "Let's rewind time with some classics."
-        ])
-    elif emotion == "relaxed":
-        base_response = random.choice([
-            "Chilling is a mood. How about some smooth beats?",
-            "Relaxing sounds good! Maybe some gentle music?",
-            "Want some peaceful tracks to maintain the vibe?"
-        ])
-    elif emotion == "excited":
-        base_response = random.choice([
-            "Let's turn up the energy! How about some upbeat tracks?",
-            "Feeling pumped? Maybe some high-energy beats?",
-            "Excitement calls for some danceable music!"
-        ])
-    else:
-        base_response = random.choice([
-            "Got it! Let's chat more about music.",
-            "Tell me more about what you're looking for!",
-            "I'd love to help you find the perfect track."
-        ])
-    
-
-    return base_response
