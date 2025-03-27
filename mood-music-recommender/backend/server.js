@@ -133,6 +133,189 @@ app.post('/api/session/verify', async (req, res) => {
   }
 });
 
+// app.post('/api/chat', async (req, res) => {
+//   const { message, sessionId } = req.body;
+//   console.log("Received chat request:", { message, sessionId });
+
+//   try {
+//     // Validate session and set access token
+//     const session = await validateSession(sessionId);
+//     spotifyApi.setAccessToken(session.spotifyAccessToken);
+
+//     // Get chat history
+//     const chatSession = await ChatSession.findOne({ sessionId });
+//     const conversationHistory = chatSession 
+//       ? chatSession.messages.slice(-5).map(msg => msg.text) 
+//       : [];
+
+//     let userGenres = [];
+//     try {
+//       const topArtists = await spotifyApi.getMyTopArtists({ limit: 50, time_range: 'medium_term' });
+//       const genreCounts = {};
+
+//       topArtists.body.items.forEach(artist => {
+//         artist.genres.forEach(genre => {
+//           genreCounts[genre] = (genreCounts[genre] || 0) + 1;
+//         });
+//       });
+
+//       userGenres = Object.keys(genreCounts).sort((a, b) => genreCounts[b] - genreCounts[a]);
+//       console.log("User's All Genres:", userGenres);
+//     } catch (error) {
+//       console.error("Failed to fetch user genres:", error);
+//       userGenres = [];
+//     }
+
+//     // Call Python API for emotion analysis & response generation
+//     const emotionResponse = await axios.post(`${REACT_APP_PYTHON_BACKEND_URL}/analyze`, { 
+//       text: message,
+//       context: conversationHistory,
+//       userGenres
+//     });
+
+//     const emotionAnalysis = emotionResponse.data;
+//     console.log("AI Emotion Analysis:", emotionAnalysis);
+
+//     if (emotionAnalysis.isToxic) {
+//       return res.json({
+//         response: "I'm not comfortable responding to that message. Let's talk about music in a more positive way.",
+//         error: "Content policy violation"
+//       });
+//     }
+
+//     const recommendedGenres = emotionAnalysis.recommendedGenres;
+//     console.log("Recommended Genres:", recommendedGenres);
+
+//     function getRandomSubset(array, count) {
+//       return array.length <= count ? array : array.sort(() => 0.5 - Math.random()).slice(0, count);
+//     }
+
+//     let tracks = [];
+
+//     try {
+//       console.log("Fetching user-specific tracks...");
+
+//       // Run both recently played and top artists fetching in parallel
+//       const [recentTracksResponse, topArtistsResponse] = await Promise.all([
+//         spotifyApi.getMyRecentlyPlayedTracks({ limit: 50 }),
+//         spotifyApi.getMyTopArtists({ limit: 5, time_range: 'medium_term' })
+//       ]);
+
+//       const recentTracks = recentTracksResponse?.body?.items || [];
+//       const topArtists = topArtistsResponse?.body?.items || [];
+
+//       if (recentTracks.length) {
+//         tracks = recentTracks
+//           .filter(item => item.track && item.track.artists.some(artist => recommendedGenres.includes(artist.genres)))
+//           .map(item => ({
+//             id: item.track.id,
+//             name: item.track.name,
+//             artist: item.track.artists[0]?.name || 'Unknown Artist',
+//             image: item.track.album?.images[0]?.url || null,
+//             uri: item.track.uri
+//           }));
+//       }
+
+//       if (tracks.length < 50) {
+//         // Fetch tracks from top artists in parallel
+//         const artistTrackPromises = topArtists
+//           .filter(artist => artist.genres.some(genre => recommendedGenres.includes(genre)))
+//           .map(artist => spotifyApi.getArtistTopTracks(artist.id).then(response => 
+//             response.body.tracks.map(track => ({
+//               id: track.id,
+//               name: track.name,
+//               artist: track.artists[0]?.name || 'Unknown Artist',
+//               image: track.album?.images[0]?.url || null,
+//               uri: track.uri
+//             }))
+//           ).catch(error => {
+//             console.error(`Failed to fetch tracks for ${artist.name}:`, error);
+//             return [];
+//           }));
+
+//         const allArtistTracks = (await Promise.all(artistTrackPromises)).flat();
+//         tracks.push(...getRandomSubset(allArtistTracks, 10));
+//       }
+//     } catch (error) {
+//       console.error("Error fetching user-specific data:", error);
+//       if (error.message.includes("Authentication error")) {
+//         return res.status(401).json({ error: "Authentication required", details: error.message });
+//       }
+//     }
+
+//     // Fallback to recently played if no tracks found
+//     if (tracks.length < 10) {
+//       console.log("Falling back to recently played songs...");
+
+//       try {
+//         const recentlyPlayed = await spotifyApi.getMyRecentlyPlayedTracks({ limit: 50 });
+
+//         if (recentlyPlayed?.body?.items?.length) {
+//           tracks = [
+//             ...tracks,
+//             ...recentlyPlayed.body.items.map(item => ({
+//               id: item.track.id,
+//               name: item.track.name,
+//               artist: item.track.artists[0]?.name || 'Unknown Artist',
+//               image: item.track.album?.images[0]?.url || null,
+//               uri: item.track.uri
+//             }))
+//           ];
+//         }
+
+//         tracks = [...new Map(tracks.map(track => [track.id, track])).values()].slice(0, 10);
+//       } catch (error) {
+//         console.error("Error fetching recently played songs:", error);
+//       }
+//     }
+
+//     // Shuffle and limit results to 10 unique tracks
+//     const uniqueTracks = [...new Map(tracks.map(track => [track.id, track])).values()]
+//       .sort(() => Math.random() - 0.5)
+//       .slice(0, 10);
+
+//     console.log(`Returning ${uniqueTracks.length} tracks to client`);
+
+//     // Save message to chat history
+//     if (chatSession) {
+//       chatSession.messages.push({
+//         text: message,
+//         timestamp: new Date(),
+//         emotion: {
+//           dominantEmotion: emotionAnalysis.dominantEmotion,
+//           mood: emotionAnalysis.mood
+//         }
+//       });
+//       await chatSession.save();
+//     } else {
+//       await new ChatSession({
+//         sessionId,
+//         messages: [{
+//           text: message,
+//           timestamp: new Date(),
+//           emotion: {
+//             dominantEmotion: emotionAnalysis.dominantEmotion,
+//             mood: emotionAnalysis.mood
+//           }
+//         }]
+//       }).save();
+//     }
+
+//     res.json({ 
+//       response: uniqueTracks.length ? emotionAnalysis.generatedResponse : "I'm having trouble finding music right now. Please try again later.",
+//       mood: emotionAnalysis.mood,
+//       emotion: emotionAnalysis.dominantEmotion,
+//       genres: recommendedGenres,
+//       tracks: uniqueTracks
+//     });
+
+//   } catch (err) {
+//     console.error("Chat API Backend Error:", err.message);
+//     res.status(err.message.includes('Session not found') || err.message.includes('Failed to refresh authentication') ? 401 : 500)
+//       .json({ error: err.message.includes('Session not found') ? "Authentication required" : "Something went wrong. Please try again.", details: err.message });
+//   }
+// });
+
 app.post('/api/chat', async (req, res) => {
   const { message, sessionId } = req.body;
   console.log("Received chat request:", { message, sessionId });
@@ -142,60 +325,46 @@ app.post('/api/chat', async (req, res) => {
     const session = await validateSession(sessionId);
     spotifyApi.setAccessToken(session.spotifyAccessToken);
 
-    // Get chat history
+    // Fetch chat history (last 5 messages)
     const chatSession = await ChatSession.findOne({ sessionId });
-    const conversationHistory = chatSession 
-      ? chatSession.messages.slice(-5).map(msg => msg.text) 
-      : [];
+    const conversationHistory = chatSession ? chatSession.messages.slice(-5).map(msg => msg.text) : [];
 
+    // Fetch user top genres
     let userGenres = [];
     try {
-      const topArtists = await spotifyApi.getMyTopArtists({ limit: 50, time_range: 'medium_term' });
-      const genreCounts = {};
-
-      topArtists.body.items.forEach(artist => {
-        artist.genres.forEach(genre => {
-          genreCounts[genre] = (genreCounts[genre] || 0) + 1;
-        });
-      });
-
+      const { body: { items: topArtists } } = await spotifyApi.getMyTopArtists({ limit: 50, time_range: 'medium_term' });
+      const genreCounts = topArtists.flatMap(artist => artist.genres).reduce((acc, genre) => {
+        acc[genre] = (acc[genre] || 0) + 1;
+        return acc;
+      }, {});
       userGenres = Object.keys(genreCounts).sort((a, b) => genreCounts[b] - genreCounts[a]);
-      console.log("User's All Genres:", userGenres);
+      console.log("User's top genres:", userGenres);
     } catch (error) {
       console.error("Failed to fetch user genres:", error);
-      userGenres = [];
     }
 
-    // Call Python API for emotion analysis & response generation
-    const emotionResponse = await axios.post(`${REACT_APP_PYTHON_BACKEND_URL}/analyze`, { 
+    // Call Python API for emotion analysis
+    const { data: emotionAnalysis } = await axios.post(`${REACT_APP_PYTHON_BACKEND_URL}/analyze`, { 
       text: message,
       context: conversationHistory,
       userGenres
     });
 
-    const emotionAnalysis = emotionResponse.data;
     console.log("AI Emotion Analysis:", emotionAnalysis);
 
     if (emotionAnalysis.isToxic) {
-      return res.json({
-        response: "I'm not comfortable responding to that message. Let's talk about music in a more positive way.",
-        error: "Content policy violation"
-      });
+      return res.json({ response: "Let's keep our conversation positive! 😊", error: "Content policy violation" });
     }
 
-    const recommendedGenres = emotionAnalysis.recommendedGenres;
+    const recommendedGenres = emotionAnalysis.recommendedGenres || [];
     console.log("Recommended Genres:", recommendedGenres);
 
-    function getRandomSubset(array, count) {
-      return array.length <= count ? array : array.sort(() => 0.5 - Math.random()).slice(0, count);
-    }
-
-    let tracks = [];
+    let tracks = new Set();
 
     try {
       console.log("Fetching user-specific tracks...");
 
-      // Run both recently played and top artists fetching in parallel
+      // Fetch user's recent tracks and top artists simultaneously
       const [recentTracksResponse, topArtistsResponse] = await Promise.all([
         spotifyApi.getMyRecentlyPlayedTracks({ limit: 50 }),
         spotifyApi.getMyTopArtists({ limit: 5, time_range: 'medium_term' })
@@ -204,38 +373,37 @@ app.post('/api/chat', async (req, res) => {
       const recentTracks = recentTracksResponse?.body?.items || [];
       const topArtists = topArtistsResponse?.body?.items || [];
 
-      if (recentTracks.length) {
-        tracks = recentTracks
-          .filter(item => item.track && item.track.artists.some(artist => recommendedGenres.includes(artist.genres)))
-          .map(item => ({
+      // Filter recent tracks based on recommended genres
+      recentTracks.forEach(item => {
+        if (item.track?.artists.some(artist => recommendedGenres.includes(artist.genres))) {
+          tracks.add(JSON.stringify({
             id: item.track.id,
             name: item.track.name,
             artist: item.track.artists[0]?.name || 'Unknown Artist',
             image: item.track.album?.images[0]?.url || null,
             uri: item.track.uri
           }));
-      }
+        }
+      });
 
-      if (tracks.length < 50) {
-        // Fetch tracks from top artists in parallel
-        const artistTrackPromises = topArtists
-          .filter(artist => artist.genres.some(genre => recommendedGenres.includes(genre)))
-          .map(artist => spotifyApi.getArtistTopTracks(artist.id).then(response => 
-            response.body.tracks.map(track => ({
+      // Fetch top tracks from recommended artists
+      const artistTrackPromises = topArtists
+        .filter(artist => artist.genres.some(genre => recommendedGenres.includes(genre)))
+        .map(artist => spotifyApi.getArtistTopTracks(artist.id).then(response => 
+          response.body.tracks.forEach(track => {
+            tracks.add(JSON.stringify({
               id: track.id,
               name: track.name,
               artist: track.artists[0]?.name || 'Unknown Artist',
               image: track.album?.images[0]?.url || null,
               uri: track.uri
-            }))
-          ).catch(error => {
-            console.error(`Failed to fetch tracks for ${artist.name}:`, error);
-            return [];
-          }));
+            }));
+          })
+        ).catch(error => console.error(`Failed to fetch tracks for ${artist.name}:`, error))
+      );
 
-        const allArtistTracks = (await Promise.all(artistTrackPromises)).flat();
-        tracks.push(...getRandomSubset(allArtistTracks, 10));
-      }
+      await Promise.all(artistTrackPromises);
+
     } catch (error) {
       console.error("Error fetching user-specific data:", error);
       if (error.message.includes("Authentication error")) {
@@ -243,36 +411,30 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    // Fallback to recently played if no tracks found
-    if (tracks.length < 10) {
+    // If not enough tracks found, fallback to recently played
+    if (tracks.size < 10) {
       console.log("Falling back to recently played songs...");
 
       try {
-        const recentlyPlayed = await spotifyApi.getMyRecentlyPlayedTracks({ limit: 50 });
+        const { body: { items: recentlyPlayed } } = await spotifyApi.getMyRecentlyPlayedTracks({ limit: 50 });
 
-        if (recentlyPlayed?.body?.items?.length) {
-          tracks = [
-            ...tracks,
-            ...recentlyPlayed.body.items.map(item => ({
-              id: item.track.id,
-              name: item.track.name,
-              artist: item.track.artists[0]?.name || 'Unknown Artist',
-              image: item.track.album?.images[0]?.url || null,
-              uri: item.track.uri
-            }))
-          ];
-        }
+        recentlyPlayed.forEach(item => {
+          tracks.add(JSON.stringify({
+            id: item.track.id,
+            name: item.track.name,
+            artist: item.track.artists[0]?.name || 'Unknown Artist',
+            image: item.track.album?.images[0]?.url || null,
+            uri: item.track.uri
+          }));
+        });
 
-        tracks = [...new Map(tracks.map(track => [track.id, track])).values()].slice(0, 10);
       } catch (error) {
         console.error("Error fetching recently played songs:", error);
       }
     }
 
-    // Shuffle and limit results to 10 unique tracks
-    const uniqueTracks = [...new Map(tracks.map(track => [track.id, track])).values()]
-      .sort(() => Math.random() - 0.5)
-      .slice(0, 10);
+    // Convert Set back to array, shuffle and limit to 10 unique tracks
+    const uniqueTracks = [...tracks].map(track => JSON.parse(track)).sort(() => Math.random() - 0.5).slice(0, 10);
 
     console.log(`Returning ${uniqueTracks.length} tracks to client`);
 
@@ -311,11 +473,10 @@ app.post('/api/chat', async (req, res) => {
 
   } catch (err) {
     console.error("Chat API Backend Error:", err.message);
-    res.status(err.message.includes('Session not found') || err.message.includes('Failed to refresh authentication') ? 401 : 500)
-      .json({ error: err.message.includes('Session not found') ? "Authentication required" : "Something went wrong. Please try again.", details: err.message });
+    const status = err.message.includes('Session not found') || err.message.includes('Failed to refresh authentication') ? 401 : 500;
+    res.status(status).json({ error: status === 401 ? "Authentication required" : "Something went wrong. Please try again.", details: err.message });
   }
 });
-
 
 
 app.get('/api/tracks', async (req, res) => {

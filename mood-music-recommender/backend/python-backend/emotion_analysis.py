@@ -185,7 +185,7 @@ def generate_dynamic_response(text, intent, emotion, context, is_toxic):
     try:
         # Use a cloud-based LLM API (e.g., Hugging Face Inference API)
         api_url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.1"
-        headers = {"Authorization": HUGGINGFACE_TOKEN}
+        headers = {"Authorization": f"Bearer {HUGGINGFACE_TOKEN}"}
         payload = {"inputs": prompt, "parameters": {"temperature": 0.7, "max_length": 150}}
         
         response = requests.post(api_url, headers=headers, json=payload)
