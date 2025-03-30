@@ -179,7 +179,7 @@ def generate_dynamic_response(text, intent, emotion, context, is_toxic):
         f"User input: {text}\n"
         "You are an AI chatbot in a music recommendation system, but you do NOT recommend songs or genres. "
         "Your role is to engage in friendly, human-like conversation by understanding the user's emotions and intent. "
-        "Respond naturally in a short,simple, empathetic, and engaging manner, within 20 words without discussing specific music preferences.But ask him to listen to songs generated \n"
+        "Respond naturally in a short,simple, empathetic, and engaging manner, less than  20 words without discussing specific music preferences.But ask him to listen to songs generated \n"
         "Assistant's response:" )
     
     try:
@@ -193,7 +193,7 @@ def generate_dynamic_response(text, intent, emotion, context, is_toxic):
         
         if "error" in result:
             raise Exception(result["error"])
-        
+        print(result)
         generated_text = result[0]["generated_text"]
         response_start = generated_text.find("Assistant's response:") + len("Assistant's response:")
         clean_response = generated_text[response_start:].strip()
@@ -252,115 +252,81 @@ GENRE_DESCRIPTIONS = {
     "world": "Music drawing from diverse global traditions and instruments"
 }
 
-
 def recommend_genres(text, emotion, userGenres, context, top_emotions):
     """
-    Recommends top 5 genres based on detected emotion and semantic matching with user's preferences.
+    Recommends top 5 genres based on LLM-based mapping
     
     Args:
         text (str): User's input text
         emotion (str): Detected primary emotion
-        userGenres (list): List of user's preferred genres
+        userGenres (list): List of user's Spotify genres
         context (list): Conversation history
-        top_emotions (list): List of (emotion, score) tuples for secondary emotion matching
+        top_emotions (list): List of top emotions
     
     Returns:
-        list: Top 5 recommended genres sorted by relevance
+        list: Top recommended genres
     """
-    # If no user genres provided, recommend based on emotion only
+    HUGGINGFACE_TOKEN = os.environ.get('HUGGINGFACE_TOKEN')
+    
+    # If no user genres provided, use emotion-based genres
     if not userGenres:
-        # Return a subset of emotion-based genres (up to 5)
-        emotion_genres = GENRE_EMOTION_MAPPING.get(emotion, ["pop", "rock", "alternative", "electronic", "indie"])
-        return random.sample(emotion_genres, min(5, len(emotion_genres)))
+        return GENRE_EMOTION_MAPPING.get(emotion, ["pop", "rock", "alternative", "electronic", "indie"])
     
-    # Create embeddings for user text and context
-    combined_text = text
-    if context:
-        # Combine recent context (last 3 messages) if available
-        recent_context = context[-3:] if len(context) > 3 else context
-        combined_text = " ".join([combined_text] + [msg for msg in recent_context])
+    # Construct a detailed prompt for genre mapping
+    prompt = (
+        f"Genre Mapping Request:\n"
+        f"User Input: {text}\n"
+        f"Detected Emotion: {emotion}\n"
+        f"User's Current Genres: {', '.join(userGenres)}\n\n"
+        "Task: Recommend the top 5 most relevant music genres among the user's genres based on the user's input ,detected emotion, and their existing genre preferences. "
+        "Provide ONLY a comma-separated list of genres among User's Current Genres no new genres without any additional explanation. "
+        "Use specific, recognizable genre names.\n"
+        "Recommended Genres:"
+    )
     
-    text_embedding = model.encode(combined_text)
-    
-    # Create genre embeddings based on their descriptions
-    genre_embeddings = {}
-    for genre in userGenres:
-        if genre.lower() in GENRE_DESCRIPTIONS:
-            genre_embeddings[genre] = model.encode(GENRE_DESCRIPTIONS[genre.lower()])
-        else:
-            # For genres not in our descriptions, use the genre name itself
-            genre_embeddings[genre] = model.encode(f"Music in the {genre} genre")
-    
-    # Get emotion characteristics for scoring
-    primary_characteristics = EMOTION_CHARACTERISTICS.get(emotion, EMOTION_CHARACTERISTICS["neutral"])
-    
-    # Calculate scores for each genre
-    genre_scores = {}
-    for genre, embedding in genre_embeddings.items():
-        genre_lower = genre.lower()
+    try:
+        # Use the same Hugging Face API endpoint
+        api_url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.1"
+        headers = {"Authorization": f"Bearer {HUGGINGFACE_TOKEN}"}
+        payload = {
+            "inputs": prompt, 
+            "parameters": {
+                "temperature": 0.7, 
+                "max_length": 100,
+                "num_return_sequences": 1
+            }
+        }
         
-        # Base score from semantic similarity
-        similarity = 1 - scipy.spatial.distance.cosine(text_embedding, embedding)
+        response = requests.post(api_url, headers=headers, json=payload)
+        result = response.json()
         
-        # Start with the base similarity score
-        score = similarity
+        if "error" in result:
+            raise Exception(result["error"])
         
-        # 1. Boost score if genre matches the detected emotion keywords
-        keyword_boost = 0
-        for keyword in primary_characteristics["keywords"]:
-            if keyword in genre_lower or genre_lower in keyword:
-                keyword_boost += 0.1
+        # Extract generated text and clean up
+        generated_text = result[0]["generated_text"]
         
-        # 2. Boost score based on tempo matching
-        if primary_characteristics["tempo"] == "fast" and any(term in genre_lower for term in 
-                                                           ["dance", "techno", "house", "edm", "rock", "metal", "punk"]):
-            score += 0.15
-        elif primary_characteristics["tempo"] == "slow" and any(term in genre_lower for term in 
-                                                             ["ballad", "ambient", "chill", "acoustic", "slow"]):
-            score += 0.15
+        # Extract genres from the generated text
+        start_index = generated_text.find("Recommended Genres:") + len("Recommended Genres:")
+        genres_text = generated_text[start_index:].strip()
         
-        # 3. Boost score based on energy matching
-        if primary_characteristics["energy"] == "high" and any(term in genre_lower for term in 
-                                                            ["rock", "dance", "metal", "punk", "edm"]):
-            score += 0.15
-        elif primary_characteristics["energy"] == "low" and any(term in genre_lower for term in 
-                                                             ["ambient", "acoustic", "chill", "sleep"]):
-            score += 0.15
+        # Split and clean genres
+        recommended_genres = [
+            genre.strip().lower() 
+            for genre in genres_text.split(',')
+            if genre.strip()
+        ]
         
-        # 4. Boost score based on mode matching
-        if primary_characteristics["mode"] == "minor" and any(term in genre_lower for term in 
-                                                           ["blues", "dark", "metal", "emo"]):
-            score += 0.1
-        elif primary_characteristics["mode"] == "major" and any(term in genre_lower for term in 
-                                                             ["pop", "happy"]):
-            score += 0.1
-            
-        # 5. Match with secondary emotions
-        for i, (secondary_emotion, emotion_score) in enumerate(top_emotions[1:], 1):
-            sec_characteristics = EMOTION_CHARACTERISTICS.get(secondary_emotion, {})
-            sec_keywords = sec_characteristics.get("keywords", [])
-            
-            # Weight based on secondary emotion score relative to primary
-            weight = emotion_score / top_emotions[0][1]
-            
-            # Check for keyword matches with secondary emotion
-            for keyword in sec_keywords:
-                if keyword in genre_lower or genre_lower in keyword:
-                    score += 0.05 * weight
+        # Fallback if no genres generated
+        if not recommended_genres:
+            recommended_genres = list(GENRE_EMOTION_MAPPING.get(emotion, ["pop", "rock", "alternative", "electronic", "indie"]))
         
-        # Add the final calculated score
-        score += keyword_boost
-        genre_scores[genre] = min(score, 1.0)  # Cap at 1.0
+        # Limit to 5 genres and remove duplicates
+        recommended_genres = list(dict.fromkeys(recommended_genres))[:5]
+        print(recommend_genres)
+        return recommended_genres
     
-    # Sort genres by score and return top 5
-    sorted_genres = sorted(genre_scores.items(), key=lambda x: x[1], reverse=True)
-    
-    # Get the top 5 genres (or all if fewer than 5)
-    top_genres = [genre for genre, _ in sorted_genres[:min(5, len(sorted_genres))]]
-    
-    # If fewer than 5 genres matched, add additional genres from user preferences
-    if len(top_genres) < 5 and len(userGenres) > len(top_genres):
-        remaining_genres = [g for g in userGenres if g not in top_genres]
-        top_genres.extend(remaining_genres[:5-len(top_genres)])
-    
-    return top_genres
+    except Exception as e:
+        print(f"Genre mapping error: {e}")
+        # Fallback to emotion-based genres
+        return list(GENRE_EMOTION_MAPPING.get(emotion, ["pop", "rock", "alternative", "electronic", "indie"]))

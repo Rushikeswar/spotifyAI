@@ -7,6 +7,7 @@ load_dotenv()  # This loads the variables from .env
 app = Flask(__name__)
 CORS(app)
 @app.route("/analyze", methods=["POST"])
+
 def analyze_text():
     data = request.json
     text = data.get('text', '')
