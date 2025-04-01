@@ -3,6 +3,7 @@ import axios from 'axios';
 import styled from 'styled-components';
 import TrackList from './TrackList';
 import { useNavigate } from 'react-router-dom';
+import SpotifyWebPlayer from './SpotifyWebPlayer';
 
 const ChatContainer = styled.div`
   display: flex;
@@ -80,6 +81,16 @@ const SendButton = styled.button`
     background-color: #1ED760;
   }
 `;
+
+const PlayerContainer = styled.div`
+   position:fixed;
+   bottom: 0;
+   left:50%;
+   width: 50%;
+   padding: 10px 0;
+   background-color: #181818;
+ `;
+
 const REACT_APP_BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
 
 function ChatInterface({ token, sessionId,apiRequest }) {
@@ -249,7 +260,13 @@ function ChatInterface({ token, sessionId,apiRequest }) {
         ) : (
           <p>Ask me for music recommendations to see tracks here!</p>
         )}
+        {playbackUris.length > 0 && (
+         <PlayerContainer>
+           <SpotifyWebPlayer token={validatedToken} uris={playbackUris} />
+         </PlayerContainer>
+       )}
       </MusicPanel>
+
     </ChatContainer>
   );
 }

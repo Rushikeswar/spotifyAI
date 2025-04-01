@@ -179,7 +179,7 @@ def generate_dynamic_response(text, intent, emotion, context, is_toxic):
         f"User input: {text}\n"
         "You are an AI chatbot in a music recommendation system, but you do NOT recommend songs or genres. "
         "Your role is to engage in friendly, human-like conversation by understanding the user's emotions and intent. "
-        "Respond naturally in a short,simple, empathetic, and engaging manner, less than  20 words without discussing specific music preferences.But ask him to listen to songs generated \n"
+        "Respond naturally in a short,simple, empathetic, and engaging manner, less than  20 words without discussing specific music preferences.Dont ever name the songs in your response.But ask him to listen to songs generated \n"
         "Assistant's response:" )
     
     try:
