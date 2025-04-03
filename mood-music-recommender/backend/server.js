@@ -8,6 +8,7 @@ const winston = require('winston');
 const axios = require('axios');
 
 const ChatSession = require("./models/ChatSession");
+const Session=require("./models/sessionSchema");
 dotenv.config();
 const logger = winston.createLogger({
   level: 'info',
@@ -28,15 +29,7 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB connection error:', err));
 
-// Define session schema and model
-const sessionSchema = new mongoose.Schema({
-  sessionId: String,
-  spotifyAccessToken: String,
-  spotifyRefreshToken: String,
-  expiresIn: Number,
-  timestamp: Date
-});
-const Session = mongoose.model('Session', sessionSchema);
+
 
 const spotifyApi = new SpotifyWebApi({
   clientId: process.env.SPOTIFY_CLIENT_ID,
@@ -255,6 +248,20 @@ app.post('/api/chat', async (req, res) => {
 
     console.log(`Returning ${uniqueTracks.length} tracks to client`);
 
+
+//     try {
+//         // Extract the first track's ID
+// // Assuming tracks is a Set converted to an array
+//       const trackIds = [uniqueTracks[0].id];
+//       const { body: audioFeatures } = await spotifyApi.getAudioFeaturesForTracks(trackIds);
+  
+//       console.log("Audio Features of First Track:", audioFeatures);
+//       return audioFeatures;
+//     } catch (error) {
+//       console.error("Failed to fetch audio features:", error);
+//     }
+
+
     // Save message to chat history
     if (chatSession) {
       chatSession.messages.push({
@@ -334,7 +341,8 @@ app.get('/api/spotify/login', async(req, res) => {
   const scopes = [
     'user-read-private', 'user-read-email', 'user-read-recently-played', 
     'user-top-read', 'playlist-read-private', 'user-library-read',
-    'playlist-modify-public', 'playlist-modify-private'
+    'playlist-modify-public', 'playlist-modify-private',
+    'user-read-playback-state', 'user-read-currently-playing'
   ];
 
   // Ensure `clientId` is set before using it
